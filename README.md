@@ -3,7 +3,9 @@ ICT est un testeur de circuits intégrés
 ## Présentation
 ICT permet d'identifier et de vérifier le fonctionnement de circuits logiques des séries [4000](https://fr.wikipedia.org/wiki/Liste_des_circuits_int%C3%A9gr%C3%A9s_de_la_s%C3%A9rie_4000) et [7400](https://fr.wikipedia.org/wiki/Liste_des_circuits_int%C3%A9gr%C3%A9s_de_la_s%C3%A9rie_7400).
 
-Il permet également de vérifier le fonctionnement de composants mémoires de types 4164 et 41256.
+Il permet également de vérifier le fonctionnement de composants mémoires.
+- Mémoires dynamiques 4164, 41256, 4416 et 44256.
+- Mémoires statiques 2114.
 
 ICT est une évolution du logiciel du projet [Smart IC Tester](https://www.instructables.com/id/Smart-IC-Tester/) de Akshay Baweja.
 
@@ -31,11 +33,11 @@ Pour développer l'application, l'IDE Eclipse, le plugin Sloeber et le core offi
 
 #### Librairies
 L'application utilise plusieurs librairies :
-- Adafruit BusIO 1.2.6
-- Adafruit GFX Library 1.9.0
-- Adafruit TouchScreen 1.0.4
-- [MCUFRIEND_kbv](https://github.com/prenticedavid/MCUFRIEND_kbv) (version de développement)
-- SdFat 1.1.0
+- Adafruit BusIO 1.5.0
+- Adafruit GFX Library 1.10.1
+- Adafruit TouchScreen 1.1.0
+- MCUFRIEND_kbv 2.9.9
+- SdFat 1.1.4
 #### Modifications
 Il est nécessaire de modifier le fichier **SdFatConfig.h** de la librairie SdFat pour permettre l'accès à la carte micro SD.
 ```cpp
