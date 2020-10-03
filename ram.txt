@@ -1,0 +1,66 @@
+$4164
+65536 x 1 dynamic random-access memory
+16
+DRAM
+RAS 4
+CAS 15
+WE 3 
+GND 16
+VCC 8
+R 5 7 6 12 11 10 13 9
+C 5 7 6 12 11 10 13 9
+D 2
+Q 14
+$41256
+262144 x 1 dynamic random-access memory
+16
+RAS 4
+DRAM
+CAS 15
+WE 3 
+GND 16
+VCC 8
+R 5 7 6 12 11 10 13 9 1
+C 5 7 6 12 11 10 13 9 1
+D 2
+Q 14
+$4416
+16384 x 4 dynamic random-access memory
+18
+DRAM
+RAS 5
+CAS 16
+WE 4
+OE 1
+GND 18
+VCC 9
+R 14 13 12 11 8 7 6 10
+C 13 12 11 8 7 6
+D 2 3 15 17
+Q 2 3 15 17
+$44256
+262144 x 4 dynamic random-access memory
+20
+DRAM
+RAS 4
+CAS 17
+WE 3
+OE 16
+GND 20
+VCC 10
+R 6 7 8 9 11 12 13 14 15
+C 6 7 8 9 11 12 13 14 15
+D 1 2 18 19
+Q 1 2 18 19
+$2114
+1024 x 4 static random-access memory
+18
+SRAM
+CS 8
+WE 10
+GND 9
+VCC 18
+A 5 6 7 4 3 2 1 17 16 15
+D 14 13 12 11
+Q 14 13 12 11
+$

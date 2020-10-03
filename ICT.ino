@@ -1,6 +1,12 @@
 // IC Tester
 // © 2020 Patrick Lafarguette
 //
+// 21/09/2020	Minor modifications.
+//
+// 18/09/2020	Move RAM definition to file.
+//
+// 18/09/2020	Code cleanup.
+//
 // 14/09/2020	1.3.0
 //				Remove DIO2 library.
 //				Add function ic_package_idle.
@@ -40,28 +46,12 @@
 #include <SdFat.h>
 #include <TouchScreen.h>
 
-#define FIO 1
-#define DIO2 0
-
-#if DIO2
-#include <DIO2.h>
-
-#define PIN_MODE(...) pinMode2(__VA_ARGS__)
-#define DIGITAL_READ(...) digitalRead2(__VA_ARGS__)
-#define DIGITAL_WRITE(...) digitalWrite2(__VA_ARGS__)
-#else
-#define PIN_MODE(...) pinMode(__VA_ARGS__)
-#define DIGITAL_READ(...) digitalRead(__VA_ARGS__)
-#define DIGITAL_WRITE(...) digitalWrite(__VA_ARGS__)
-#endif
-
 #include "IC.h"
-#include "DRAM.h"
-#include "SRAM.h"
+#include "RAM.h"
 #include "Stack.h"
 
 // Set one of the language to 1.
-// French UI, currently not viable as screen only support
+// French UI, currently not viable as screen only supports
 // unaccented US-ASCII character set.
 
 #define ENGLISH 1
@@ -93,7 +83,6 @@ Stack<String*> lines;
 #define Debug(...) Serial.print(__VA_ARGS__)
 #define Debugln(...) Serial.println(__VA_ARGS__)
 #else
-#define x(...)
 #define Debug(...)
 #define Debugln(...)
 #endif
@@ -160,7 +149,7 @@ typedef struct Worker {
 	Package package;
 	String code;
 	// Identify
-	unsigned int index;
+	uint8_t index;
 	// Test
 	bool found;
 	bool ok;
@@ -169,7 +158,7 @@ typedef struct Worker {
 	// UI
 	uint16_t color;
 	unsigned int indicator;
-	unsigned int ram;
+	uint8_t ram;
 } Worker;
 
 Worker worker;
@@ -227,12 +216,9 @@ Worker worker;
 
 Adafruit_GFX_Button buttons[button_count];
 
-// Database filename
-#define FILENAME "database.txt"
-
-//#pragma GCC optimize ("-O2")
-//
-//#pragma GCC push_options
+// Filenames
+#define LOGICFILE "logic.txt"
+#define RAMFILE "ram.txt"
 
 /////////
 // Bus //
@@ -256,7 +242,6 @@ const uint16_t DATA[] = {
 		(uint16_t)(1 << 15)
 };
 
-#if FIO
 void ic_bus_write(Bus& bus) {
 	for (uint8_t index = 0; index < bus.count; ++index) {
 		ic_pin_write(worker.package.pins[bus.pins[index]], bus.value & DATA[index]);
@@ -283,35 +268,6 @@ void ic_bus_input(Bus& bus) {
 		ic_pin_mode(worker.package.pins[bus.pins[index]], INPUT);
 	}
 }
-#else
-void ic_bus_write(Bus& bus) {
-	for (uint8_t index = 0; index < bus.count; ++index) {
-		DIGITAL_WRITE(worker.package.pins[bus.pins[index]], bus.value & DATA[index]);
-	}
-}
-
-void ic_bus_read(Bus& bus) {
-	bus.value = 0;
-	for (uint8_t index = 0; index < bus.count; ++index) {
-		if (DIGITAL_READ(worker.package.pins[bus.pins[index]])) {
-			bus.value |= DATA[index];
-		}
-	}
-}
-
-void ic_bus_output(Bus& bus) {
-	for (uint8_t index = 0; index < bus.count; ++index) {
-		PIN_MODE(worker.package.pins[bus.pins[index]], OUTPUT);
-	}
-}
-
-void ic_bus_input(Bus& bus) {
-	for (uint8_t index = 0; index < bus.count; ++index) {
-		ic_pin_mode(worker.package.pins[bus.pins[index]], INPUT);
-		PIN_MODE(worker.package.pins[bus.pins[index]], INPUT);
-	}
-}
-#endif
 
 void ic_bus_data(Bus& bus, uint8_t bit, const bool alternate) {
 	uint8_t mask = alternate ? HIGH : LOW;
@@ -326,121 +282,139 @@ void ic_bus_data(Bus& bus, uint8_t bit, const bool alternate) {
 	Debugln(bus.value, BIN);
 }
 
+/////////
+// RAM //
+/////////
+
+bool ic_ram_signal(uint8_t signal) {
+	return ram.signals[signal] > -1;
+}
+
+void ic_ram() {
+	// UI
+	worker.ram = 0;
+	worker.color = TFT_WHITE;
+	for (uint8_t index = 0; index < 4; ++index) {
+		ui_draw_ram();
+	}
+	worker.ram = 0;
+#if TIME
+	// Timer
+	unsigned long start = millis();
+#endif
+	// Setup
+	for (uint8_t index = 0; index < ram.bus[BUS_Q].count; ++index) {
+		ic_pin_mode(worker.package.pins[ram.bus[BUS_Q].pins[index]], INPUT);
+	}
+	// VCC, GND
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_GND]], LOW);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_VCC]], HIGH);
+	// Idle
+	ram.idle();
+	// Test
+	worker.indicator = 0;
+	ic_bus_data(ram.bus[BUS_D], LOW, true);
+	ram.fill(true);
+	ic_bus_data(ram.bus[BUS_D], HIGH, true);
+	ram.fill(true);
+	ic_bus_data(ram.bus[BUS_D], LOW, false);
+	ram.fill(false);
+	ic_bus_data(ram.bus[BUS_D], HIGH, false);
+	ram.fill(false);
+	// Shutdown
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_VCC]], LOW);
+#if TIME
+	unsigned long stop = millis();
+	Serial.print(F(TIME_ELAPSED));
+	Serial.println((stop - start) / 1000.0);
+#endif
+}
+
 //////////
 // DRAM //
 //////////
 
-bool ic_dram_oe(DRAM &dram) {
-	return dram.signals[DRAM_OE] > 0;
-}
-
-#if FIO
-void ic_dram_write(DRAM& dram) {
-	// Row
-	ic_bus_write(dram.row);
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_RAS]], LOW);
-	// WE
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_WE]], LOW);
-	// D
-	ic_bus_write(dram.d);
-	// Column
-	ic_bus_write(dram.column);
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_CAS]], LOW);
+void ic_dram_idle() {
 	// Idle
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_WE]], HIGH);
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_RAS]], HIGH);
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_CAS]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
+	if (ic_ram_signal(SIGNAL_OE)) {
+		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], HIGH);
+	}
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], HIGH);
+	for (uint8_t index = 0; index < ram.bus[BUS_RAS].count; ++index) {
+		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], LOW);
+		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
+	}
 }
 
-void ic_dram_read(DRAM& dram) {
+void ic_dram_write() {
 	// Row
-	ic_bus_write(dram.row);
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_RAS]], LOW);
+	ic_bus_write(ram.bus[BUS_RAS]);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], LOW);
+	// WE
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], LOW);
+	// D
+	ic_bus_write(ram.bus[BUS_D]);
 	// Column
-	ic_bus_write(dram.column);
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_CAS]], LOW);
+	ic_bus_write(ram.bus[BUS_CAS]);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], LOW);
+	// Idle
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], HIGH);
+}
+
+void ic_dram_read() {
+	// Row
+	ic_bus_write(ram.bus[BUS_RAS]);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], LOW);
+	// Column
+	ic_bus_write(ram.bus[BUS_CAS]);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], LOW);
 	// OE
-	if (ic_dram_oe(dram)) {
-		ic_pin_write(worker.package.pins[dram.signals[DRAM_OE]], LOW);
+	bool oe = ic_ram_signal(SIGNAL_OE);
+	if (oe) {
+		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], LOW);
 	}
 	// Q
-	ic_bus_read(dram.q);
+	ic_bus_read(ram.bus[BUS_Q]);
 	// Idle
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_RAS]], HIGH);
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_CAS]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], HIGH);
 	// OE
-	if (ic_dram_oe(dram)) {
-		ic_pin_write(worker.package.pins[dram.signals[DRAM_OE]], HIGH);
+	if (oe) {
+		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], HIGH);
 	}
-}
-#else
-void ic_dram_write(DRAM& dram) {
-	// Row
-	ic_bus_write(dram.row);
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_RAS]], LOW);
-	// WE
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_WE]], LOW);
-	// D
-	ic_bus_write(dram.d);
-	// Column
-	ic_bus_write(dram.column);
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_CAS]], LOW);
-	// Idle
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_WE]], HIGH);
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_RAS]], HIGH);
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_CAS]], HIGH);
 }
 
-void ic_dram_read(DRAM& dram) {
-	// Row
-	ic_bus_write(dram.row);
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_RAS]], LOW);
-	// Column
-	ic_bus_write(dram.column);
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_CAS]], LOW);
-	// OE
-	if (ic_dram_oe(dram)) {
-		DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_OE]], LOW);
-	}
-	// Q
-	ic_bus_read(dram.q);
-	// Idle
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_RAS]], HIGH);
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_CAS]], HIGH);
-	// OE
-	if (ic_dram_oe(dram)) {
-		DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_OE]], HIGH);
-	}
-}
-#endif
-
-void ic_dram_fill(DRAM& dram, const bool alternate = false) {
-	uint16_t mask = alternate ? dram.d.high : 0;
+void ic_dram_fill(const bool alternate = false) {
+	uint16_t mask = alternate ? ram.bus[BUS_D].high : 0;
 	worker.color = COLOR_GOOD;
-	for (dram.column.value = 0; dram.column.value < dram.column.high; ++dram.column.value) {
+	for (ram.bus[BUS_CAS].value = 0; ram.bus[BUS_CAS].value < ram.bus[BUS_CAS].high; ++ram.bus[BUS_CAS].value) {
 		worker.success = 0;
 		worker.failure = 0;
-		ic_bus_output(dram.d);
+		ic_bus_output(ram.bus[BUS_D]);
 		// Inner loop is RAS to keep refreshing rows while writing a full column
-		for (dram.row.value = 0; dram.row.value < dram.row.high; ++dram.row.value) {
-			ic_dram_write(dram);
-			dram.d.value ^= mask;
+		for (ram.bus[BUS_RAS].value = 0; ram.bus[BUS_RAS].value < ram.bus[BUS_RAS].high; ++ram.bus[BUS_RAS].value) {
+			ic_dram_write();
+			ram.bus[BUS_D].value ^= mask;
 		}
-		ic_bus_input(dram.q);
+		ic_bus_input(ram.bus[BUS_Q]);
 		// Inner loop is RAS to keep refreshing rows while reading back a full column
-		for (dram.row.value = 0; dram.row.value < dram.row.high; ++dram.row.value) {
-			ic_dram_read(dram);
-			if (dram.d.value != dram.q.value) {
+		for (ram.bus[BUS_RAS].value = 0; ram.bus[BUS_RAS].value < ram.bus[BUS_RAS].high; ++ram.bus[BUS_RAS].value) {
+			ic_dram_read();
+			if (ram.bus[BUS_D].value != ram.bus[BUS_Q].value) {
 				Debug("D ");
-				Debug(dram.d.value, BIN);
+				Debug(ram.bus[BUS_D].value, BIN);
 				Debug(", Q ");
-				Debugln(dram.q.value, BIN);
+				Debugln(ram.bus[BUS_Q].value, BIN);
 				worker.failure++;
 				worker.color = COLOR_BAD;
 			} else {
 				worker.success++;
 			}
-			dram.d.value ^= mask;
+			ram.bus[BUS_D].value ^= mask;
 		}
 		ui_draw_indicator((worker.success ? (worker.failure ? COLOR_MIXED : COLOR_GOOD) : COLOR_BAD));
 #if CAPTURE
@@ -451,201 +425,70 @@ void ic_dram_fill(DRAM& dram, const bool alternate = false) {
 	}
 	ui_draw_ram();
 }
-
-#if FIO
-void ic_dram(DRAM& dram) {
-	// UI
-	worker.ram = 0;
-	worker.color = TFT_WHITE;
-	for (unsigned int index = 0; index < 4; ++index) {
-		ui_draw_ram();
-	}
-	worker.ram = 0;
-#if TIME
-	// Timer
-	unsigned long start = millis();
-#endif
-	// Setup
-	dram.row.high = 1 << dram.row.count;
-	dram.column.high = 1 << dram.column.count;
-	for (unsigned int index = 0; index < dram.q.count; ++index) {
-		ic_pin_mode(worker.package.pins[dram.q.pins[index]], INPUT);
-	}
-	// VCC, GND
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_GND]], LOW);
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_VCC]], HIGH);
-	// Idle
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_WE]], HIGH);
-	if (ic_dram_oe(dram)) {
-		ic_pin_write(worker.package.pins[dram.signals[DRAM_OE]], HIGH);
-	}
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_RAS]], HIGH);
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_CAS]], HIGH);
-	for (unsigned int index = 0; index < dram.row.count; ++index) {
-		ic_pin_write(worker.package.pins[dram.signals[DRAM_RAS]], LOW);
-		ic_pin_write(worker.package.pins[dram.signals[DRAM_RAS]], HIGH);
-	}
-	// Test
-	worker.indicator = 0;
-	Debugln(F(RAM_FILL_01));
-	ic_bus_data(dram.d, LOW, true);
-	ic_dram_fill(dram, true);
-	Debugln(F(RAM_FILL_10));
-	ic_bus_data(dram.d, HIGH, true);
-	ic_dram_fill(dram, true);
-	Debugln(F(RAM_FILL_00));
-	ic_bus_data(dram.d, LOW, false);
-	ic_dram_fill(dram);
-	Debugln(F(RAM_FILL_11));
-	ic_bus_data(dram.d, HIGH, false);
-	ic_dram_fill(dram);
-	// Shutdown
-	ic_pin_write(worker.package.pins[dram.signals[DRAM_VCC]], LOW);
-#if TIME
-	unsigned long stop = millis();
-	Serial.print(F(TIME_ELAPSED));
-	Serial.println((stop - start) / 1000.0);
-#endif
-}
-#else
-void ic_dram(DRAM& dram) {
-	// UI
-	worker.ram = 0;
-	worker.color = TFT_WHITE;
-	for (unsigned int index = 0; index < 4; ++index) {
-		ui_draw_ram();
-	}
-	worker.ram = 0;
-#if TIME
-	// Timer
-	unsigned long start = millis();
-#endif
-	// Setup
-	dram.row.high = 1 << dram.row.count;
-	dram.column.high = 1 << dram.column.count;
-	for (unsigned int index = 0; index < dram.q.count; ++index) {
-		PIN_MODE(worker.package.pins[dram.q.pins[index]], INPUT);
-	}
-	// VCC, GND
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_GND]], LOW);
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_VCC]], HIGH);
-	// Idle
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_WE]], HIGH);
-	if (ic_dram_oe(dram)) {
-		DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_OE]], HIGH);
-	}
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_RAS]], HIGH);
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_CAS]], HIGH);
-	for (unsigned int index = 0; index < dram.row.count; ++index) {
-		DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_RAS]], LOW);
-		DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_RAS]], HIGH);
-	}
-	// Test
-	worker.indicator = 0;
-	Debugln(F(RAM_FILL_01));
-	ic_bus_data(dram.d, LOW, true);
-	ic_dram_fill(dram, true);
-	Debugln(F(RAM_FILL_10));
-	ic_bus_data(dram.d, HIGH, true);
-	ic_dram_fill(dram, true);
-	Debugln(F(RAM_FILL_00));
-	ic_bus_data(dram.d, LOW, false);
-	ic_dram_fill(dram);
-	Debugln(F(RAM_FILL_11));
-	ic_bus_data(dram.d, HIGH, false);
-	ic_dram_fill(dram);
-	// Shutdown
-	DIGITAL_WRITE(worker.package.pins[dram.signals[DRAM_VCC]], LOW);
-#if TIME
-	unsigned long stop = millis();
-	Serial.print(F(TIME_ELAPSED));
-	Serial.println((stop - start) / 1000.0);
-#endif
-}
-#endif
 
 //////////
 // SRAM //
 //////////
 
-#if FIO
-void ic_sram_write(SRAM& sram) {
+void ic_sram_idle() {
+	// Idle
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
+}
+
+void ic_sram_write() {
 	// Address
-	ic_bus_write(sram.address);
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_CS]], LOW);
+	ic_bus_write(ram.bus[BUS_ADDRESS]);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], LOW);
 	// WE
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_WE]], LOW);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], LOW);
 	// D
-	ic_bus_write(sram.d);
+	ic_bus_write(ram.bus[BUS_D]);
 	// Idle
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_WE]], HIGH);
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_CS]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
 }
 
-void ic_sram_read(SRAM& sram) {
+void ic_sram_read() {
 	// Address
-	ic_bus_write(sram.address);
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_CS]], LOW);
+	ic_bus_write(ram.bus[BUS_ADDRESS]);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], LOW);
 	// Q
-	ic_bus_read(sram.q);
+	ic_bus_read(ram.bus[BUS_Q]);
 	// Idle
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_CS]], HIGH);
-}
-#else
-void ic_sram_write(SRAM& sram) {
-	// Address
-	ic_bus_write(sram.address);
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_CS]], LOW);
-	// WE
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_WE]], LOW);
-	// D
-	ic_bus_write(sram.d);
-	// Idle
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_WE]], HIGH);
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_CS]], HIGH);
+	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
 }
 
-void ic_sram_read(SRAM& sram) {
-	// Address
-	ic_bus_write(sram.address);
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_CS]], LOW);
-	// Q
-	ic_bus_read(sram.q);
-	// Idle
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_CS]], HIGH);
-}
-#endif
-
-void ic_sram_fill(SRAM& sram, const bool alternate = false) {
-	uint16_t mask = alternate ? dram.d.high : 0;
+void ic_sram_fill(const bool alternate = false) {
+	uint16_t mask = alternate ? ram.bus[BUS_D].high : 0;
 	worker.color = COLOR_GOOD;
 	// Write full address space
-	ic_bus_output(sram.d);
-	for (sram.address.value = 0; sram.address.value < sram.address.high; ++sram.address.value) {
-		ic_sram_write(sram);
-		sram.d.value ^= mask;
+	ic_bus_output(ram.bus[BUS_D]);
+	for (ram.bus[BUS_ADDRESS].value = 0; ram.bus[BUS_ADDRESS].value < ram.bus[BUS_ADDRESS].high; ++ram.bus[BUS_ADDRESS].value) {
+		ic_sram_write();
+		ram.bus[BUS_D].value ^= mask;
 	}
 	// Read full address space
-	ic_bus_input(sram.q);
-	for (sram.address.value = 0; sram.address.value < sram.address.high; ++sram.address.value) {
+	ic_bus_input(ram.bus[BUS_Q]);
+	for (ram.bus[BUS_ADDRESS].value = 0; ram.bus[BUS_ADDRESS].value < ram.bus[BUS_ADDRESS].high; ++ram.bus[BUS_ADDRESS].value) {
 		worker.success = 0;
 		worker.failure = 0;
-		ic_sram_read(sram);
-		if (sram.d.value != sram.q.value) {
+		ic_sram_read();
+		if (ram.bus[BUS_D].value != ram.bus[BUS_Q].value) {
 			Debug("A ");
-			Debug(sram.address.value, BIN);
+			Debug(ram.bus[BUS_ADDRESS].value, BIN);
 			Debug(", D ");
-			Debug(sram.d.value, BIN);
+			Debug(ram.bus[BUS_D].value, BIN);
 			Debug(", Q ");
-			Debug(sram.q.value, BIN);
+			Debug(ram.bus[BUS_Q].value, BIN);
 			Debug(", delta ");
-			Debugln(sram.d.value ^ sram.q.value, BIN);
+			Debugln(ram.bus[BUS_D].value ^ ram.bus[BUS_Q].value, BIN);
 			worker.failure++;
 			worker.color = COLOR_BAD;
 		} else {
 			worker.success++;
 		}
-		sram.d.value ^= mask;
+		ram.bus[BUS_D].value ^= mask;
 		ui_draw_indicator((worker.success ? (worker.failure ? COLOR_MIXED : COLOR_GOOD) : COLOR_BAD));
 #if CAPTURE
 		if (ts_touched()) {
@@ -655,102 +498,6 @@ void ic_sram_fill(SRAM& sram, const bool alternate = false) {
 	}
 	ui_draw_ram();
 }
-
-#if FIO
-void ic_sram(SRAM& sram) {
-	// UI
-	worker.ram = 0;
-	worker.color = TFT_WHITE;
-	for (unsigned int index = 0; index < 4; ++index) {
-		ui_draw_ram();
-	}
-	worker.ram = 0;
-#if TIME
-	// Timer
-	unsigned long start = millis();
-#endif
-	// Setup
-	sram.address.high = 1 << sram.address.count;
-	for (unsigned int index = 0; index < sram.q.count; ++index) {
-		ic_pin_mode(worker.package.pins[sram.q.pins[index]], INPUT);
-	}
-	// VCC, GND
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_GND]], LOW);
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_VCC]], HIGH);
-	// Idle
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_WE]], HIGH);
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_CS]], HIGH);
-	// Test
-	worker.indicator = 0;
-	Debugln(F(RAM_FILL_01));
-	ic_bus_data(sram.d, LOW, true);
-	ic_sram_fill(sram, true);
-	Debugln(F(RAM_FILL_10));
-	ic_bus_data(sram.d, HIGH, true);
-	ic_sram_fill(sram, true);
-	Debugln(F(RAM_FILL_00));
-	ic_bus_data(sram.d, LOW, false);
-	ic_sram_fill(sram);
-	Debugln(F(RAM_FILL_11));
-	ic_bus_data(sram.d, HIGH, false);
-	ic_sram_fill(sram);
-	// Shutdown
-	ic_pin_write(worker.package.pins[sram.signals[SRAM_VCC]], LOW);
-#if TIME
-	unsigned long stop = millis();
-	Serial.print(F(TIME_ELAPSED));
-	Serial.println((stop - start) / 1000.0);
-#endif
-}
-#else
-void ic_sram(SRAM& sram) {
-	// UI
-	worker.ram = 0;
-	worker.color = TFT_WHITE;
-	for (unsigned int index = 0; index < 4; ++index) {
-		ui_draw_ram();
-	}
-	worker.ram = 0;
-#if TIME
-	// Timer
-	unsigned long start = millis();
-#endif
-	// Setup
-	sram.address.high = 1 << sram.address.count;
-	for (unsigned int index = 0; index < sram.q.count; ++index) {
-		PIN_MODE(worker.package.pins[sram.q.pins[index]], INPUT);
-	}
-	// VCC, GND
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_GND]], LOW);
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_VCC]], HIGH);
-	// Idle
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_WE]], HIGH);
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_CS]], HIGH);
-	// Test
-	worker.indicator = 0;
-	Debugln(F(RAM_FILL_01));
-	ic_bus_data(sram.d, LOW, true);
-	ic_sram_fill(sram, true);
-	Debugln(F(RAM_FILL_10));
-	ic_bus_data(sram.d, HIGH, true);
-	ic_sram_fill(sram, true);
-	Debugln(F(RAM_FILL_00));
-	ic_bus_data(sram.d, LOW, false);
-	ic_sram_fill(sram);
-	Debugln(F(RAM_FILL_11));
-	ic_bus_data(sram.d, HIGH, false);
-	ic_sram_fill(sram);
-	// Shutdown
-	DIGITAL_WRITE(worker.package.pins[sram.signals[SRAM_VCC]], LOW);
-#if TIME
-	unsigned long stop = millis();
-	Serial.print(F(TIME_ELAPSED));
-	Serial.println((stop - start) / 1000.0);
-#endif
-}
-#endif
-
-//#pragma GCC pop_options
 
 //////////////////
 // Touch screen //
@@ -762,10 +509,10 @@ void ic_sram(SRAM& sram) {
 
 bool ts_touched() {
 	TSPoint point = ts.getPoint();
-	PIN_MODE(YP, OUTPUT);
-	PIN_MODE(XM, OUTPUT);
-	DIGITAL_WRITE(YP, HIGH);
-	DIGITAL_WRITE(XM, HIGH);
+	pinMode(YP, OUTPUT);
+	pinMode(XM, OUTPUT);
+	digitalWrite(YP, HIGH);
+	digitalWrite(XM, HIGH);
 	if (point.z > TS_MIN && point.z < TS_MAX) {
 		// TODO adapt code to your display
 		worker.x = map(point.y, TS_LEFT, TS_RT, TFT_WIDTH, 0);
@@ -788,10 +535,10 @@ void ts_wait() {
 			delay(TS_DELAY);
 		}
 	}
-	PIN_MODE(YP, OUTPUT);
-	PIN_MODE(XM, OUTPUT);
-	DIGITAL_WRITE(YP, HIGH);
-	DIGITAL_WRITE(XM, HIGH);
+	pinMode(YP, OUTPUT);
+	pinMode(XM, OUTPUT);
+	digitalWrite(YP, HIGH);
+	digitalWrite(XM, HIGH);
 }
 
 /////////
@@ -823,7 +570,7 @@ void sd_screen_capture() {
 	static unsigned int index = 0;
 	String filename("image.");
 	filename += index++;
-	filename += ".data";
+	filename += ".bus";
 	Serial.print("Save ");
 	Serial.print(filename);
 	uint16_t* pixels = (uint16_t*)malloc(sizeof(uint16_t) * TFT_WIDTH);
@@ -857,7 +604,7 @@ void ui_draw_center(const __FlashStringHelper* text, int16_t y) {
 	tft.println(text);
 }
 
-void ui_draw_wrap(const String &string, const unsigned int size) {
+void ui_draw_wrap(const String &string, const uint8_t size) {
 	unsigned int start = 0;
 	unsigned int index = start;
 	tft.setTextSize(size);
@@ -888,7 +635,7 @@ void ui_draw_error(const __FlashStringHelper* text) {
 	ui_draw_center(text, AREA_CONTENT + 32);
 }
 
-void ui_draw_indicator(const unsigned int color) {
+void ui_draw_indicator(const uint16_t color) {
 	tft.fillRect(worker.indicator * 20 + 2, 222, 16, 16, color);
 	worker.indicator++;
 	worker.indicator %= 16;
@@ -965,7 +712,7 @@ void ui_draw_escape() {
 void ui_draw_menu(const char* items[], const unsigned int count) {
 	unsigned int y = AREA_CONTENT - 4;
 	ui_draw_header(true);
-	for (unsigned int index = 0; index < count; ++index) {
+	for (uint8_t index = 0; index < count; ++index) {
 		buttons[index].initButton(&tft,
 		BUTTON_X,
 		BUTTON_Y + index * (BUTTON_H + BUTTON_SPACING_Y),
@@ -1029,8 +776,8 @@ void ui_draw_screen() {
 		tft.fillScreen(TFT_NAVY);
 		tft.drawRect(0, 0, TFT_WIDTH, INPUT_HEIGHT, TFT_YELLOW);
 		tft.drawRect(1, 1, TFT_WIDTH - 2, INPUT_HEIGHT - 2, TFT_YELLOW);
-		for (unsigned int row = 0; row < 2; ++row) {
-			for (unsigned int column = 0; column < 5; ++column) {
+		for (uint8_t row = 0; row < 2; ++row) {
+			for (uint8_t column = 0; column < 5; ++column) {
 				buttons[column + row * 5].initButton(&tft,
 						BUTTON_X + column * (BUTTON_W + BUTTON_SPACING_X),
 						BUTTON_Y + row * (BUTTON_H + BUTTON_SPACING_Y),
@@ -1059,6 +806,8 @@ void ui_draw_screen() {
 		ic_test_logic();
 		break;
 	case state_test_ram:
+		ics.clear();
+		lines.clear();
 		ui_draw_header(true);
 		// Action
 		tft.setTextSize(2);
@@ -1176,7 +925,6 @@ void ui_draw_content() {
 // Integrated circuit //
 ////////////////////////
 
-#if FIO
 void ic_package_create() {
 	for (uint8_t index = 0, delta = 0; index < worker.package.count; ++index) {
 		if (index == worker.package.count >> 1) {
@@ -1191,44 +939,29 @@ void ic_package_create() {
 }
 
 void ic_package_output() {
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
+	for (uint8_t index = 0; index < worker.package.count; ++index) {
 		ic_pin_mode(worker.package.pins[index], OUTPUT);
 		ic_pin_write(worker.package.pins[index], LOW);
 	}
 }
 
 void ic_package_idle() {
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
+	for (uint8_t index = 0; index < worker.package.count; ++index) {
 		ic_pin_mode(worker.package.pins[index], INPUT);
 	}
 }
-#else
-void ic_package_create() {
-	for (uint8_t index = 0, delta = 0; index < worker.package.count; ++index) {
-		if (index == worker.package.count >> 1) {
-			delta = ZIF_COUNT - worker.package.count;
-		}
-		worker.package.pins[index] = ZIF[index + delta];
-	}
-}
-
-void ic_package_output() {
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
-		PIN_MODE(worker.package.pins[index], OUTPUT);
-	}
-}
-#endif
 
 #if TEST
 void ic_package_dump() {
 	Serial.print("DIP");
 	Serial.print(worker.package.count);
 	Serial.print(" ");
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
+	for (uint8_t index = 0; index < worker.package.count; ++index) {
 		if (index) {
 			Serial.print(", ");
 		}
-		Serial.print(worker.package.pins[index]);
+		// TODO adapt to Pin
+		// Serial.print(worker.package.pins[index]);
 	}
 	Serial.println();
 }
@@ -1255,13 +988,12 @@ void ic_package_test() {
 }
 #endif
 
-#if FIO
 bool ic_test_logic(String line) {
 	bool result = true;
 	int8_t clock = -1;
 	Debugln(line);
 	// VCC, GND and output
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
+	for (uint8_t index = 0; index < worker.package.count; ++index) {
 		switch (line[index]) {
 		case 'V':
 			ic_pin_mode(worker.package.pins[index], OUTPUT);
@@ -1283,7 +1015,7 @@ bool ic_test_logic(String line) {
 	}
 	delay(5);
 	// Write
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
+	for (uint8_t index = 0; index < worker.package.count; ++index) {
 		switch (line[index]) {
 		case 'X':
 		case '0':
@@ -1310,7 +1042,7 @@ bool ic_test_logic(String line) {
 	}
 	delay(5);
 	// Read
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
+	for (uint8_t index = 0; index < worker.package.count; ++index) {
 		switch (line[index]) {
 		case 'H':
 			if (!ic_pin_read(worker.package.pins[index])) {
@@ -1335,92 +1067,11 @@ bool ic_test_logic(String line) {
 	Debugln();
 	return result;
 }
-#else
-bool ic_test_logic(String line) {
-	bool result = true;
-	int clock = -1;
-	Debugln(line);
-	// VCC, GND and output
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
-		switch (line[index]) {
-		case 'V':
-			PIN_MODE(worker.package.pins[index], OUTPUT);
-			DIGITAL_WRITE(worker.package.pins[index], HIGH);
-			break;
-		case 'G':
-			PIN_MODE(worker.package.pins[index], OUTPUT);
-			DIGITAL_WRITE(worker.package.pins[index], LOW);
-			break;
-		case 'L':
-			DIGITAL_WRITE(worker.package.pins[index], LOW);
-			PIN_MODE(worker.package.pins[index], INPUT_PULLUP);
-			break;
-		case 'H':
-			DIGITAL_WRITE(worker.package.pins[index], LOW);
-			PIN_MODE(worker.package.pins[index], INPUT_PULLUP);
-			break;
-		}
-	}
-	delay(5);
-	// Write
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
-		switch (line[index]) {
-		case 'X':
-		case '0':
-			PIN_MODE(worker.package.pins[index], OUTPUT);
-			DIGITAL_WRITE(worker.package.pins[index], LOW);
-			break;
-		case '1':
-			PIN_MODE(worker.package.pins[index], OUTPUT);
-			DIGITAL_WRITE(worker.package.pins[index], HIGH);
-			break;
-		case 'C':
-			clock = worker.package.pins[index];
-			PIN_MODE(worker.package.pins[index], OUTPUT);
-			DIGITAL_WRITE(worker.package.pins[index], LOW);
-			break;
-		}
-	}
-	// Clock
-	if (clock != -1) {
-		PIN_MODE(clock, INPUT_PULLUP);
-		delay(10);
-		PIN_MODE(clock, OUTPUT);
-		DIGITAL_WRITE(clock, LOW);
-	}
-	delay(5);
-	// Read
-	for (unsigned int index = 0; index < worker.package.count; ++index) {
-		switch (line[index]) {
-		case 'H':
-			if (!DIGITAL_READ(worker.package.pins[index])) {
-				result = false;
-				Debug(F(_LOW));
-			} else {
-				Debug(F(SPACE));
-			}
-			break;
-		case 'L':
-			if (DIGITAL_READ(worker.package.pins[index])) {
-				result = false;
-				Debug(F(_HIGH));
-			} else {
-				Debug(F(SPACE));
-			}
-			break;
-		default:
-			Debug(F(SPACE));
-		}
-	}
-	Debugln();
-	return result;
-}
-#endif
 
 void ic_identify_logic() {
 	String line;
 	IC ic;
-	File file = fat.open(FILENAME);
+	File file = fat.open(LOGICFILE);
 	if (file) {
 		worker.indicator= 0;
 		while (file.available()) {
@@ -1473,7 +1124,7 @@ void ic_identify_logic() {
 void ic_test_logic() {
 	String line;
 	IC ic;
-	File file = fat.open(FILENAME);
+	File file = fat.open(LOGICFILE);
 	if (file) {
 		worker.indicator = 0;
 		worker.found = false;
@@ -1515,7 +1166,7 @@ void ic_test_logic() {
 			bool loop = true;
 			while (loop) {
 				worker.ok = true;
-				for (unsigned int index = 0; index < lines.count(); ++index) {
+				for (uint8_t index = 0; index < lines.count(); ++index) {
 					if (ic_test_logic(*lines[index]) == false) {
 						worker.ok = false;
 					}
@@ -1542,133 +1193,160 @@ void ic_test_logic() {
 	ui_draw_screen();
 }
 
-void ic_test_dram(IC& ic) {
-	switch (dram_identify(worker.code.toInt())) {
-	case DRAM_4164:
-		// Code base
-		// Time elapsed 100.43
-
-		// RAS inner loop
-		// Time elapsed 97.55
-
-		// DIO2 library
-		// Time elapsed 70.31
-
-		// uint8_t in ic_bus_xx functions
-		// Time elapsed 68.93
-
-		// -o2
-		// Time elapsed 61.40
-
-		// DATA[] in ic_bus_xx functions
-		// Time elapsed 60.70
-
-		// FIO and DIO2
-		// Time elapsed 54.80
-
-		// FIO
-		// Time elapsed 54.80
-		ic.type = TYPE_DRAM;
-		ic.description = DRAM_64K_X1;
-		dram = dram41xx;
-		dram.row.count = 8;
-		dram.column.count = 8;
-		break;
-	case DRAM_41256:
-		// FIO
-		// Time elapsed 233.72
-		ic.type = TYPE_DRAM;
-		ic.description = DRAM_256K_X1;
-		dram = dram41xx;
-		dram.row.count = 9;
-		dram.column.count = 9;
-		break;
-	case DRAM_4416:
-		// DATA[] in ic_bus_xx functions
-		// Time elapsed 15.82
-
-		// FIO and DIO2
-		// Time elapsed 14.15
-
-		// FIO
-		// Time elapsed 14.15
-		ic.type = TYPE_DRAM;
-		ic.description = DRAM_16K_X4;
-		dram = dram4416;
-		break;
-	case DRAM_44256:
-		// Code base
-		// Time elapsed 545.19
-
-		// RAS inner loop
-		// Time elapsed 495.35
-
-		// DIO2 library
-		// Time elapsed 353.53
-
-		// uint8_t in ic_bus_xx functions
-		// Time elapsed 346.86
-
-		// -O2
-		// Time elapsed 306.70
-
-		// DATA[] in ic_bus_xx functions
-		// Time elapsed 297.28
-
-		// FIO and DIO2
-		// Time elapsed 264.58
-
-		// FIO
-		// Time elapsed 264.59
-		ic.type = TYPE_DRAM;
-		ic.description = DRAM_256K_X4;
-		dram = dram44256;
-		break;
-	default:
-		break;
+bool ic_parse_bus(String& tag, String& data) {
+	const char* LABELS[] = { "A", "R", "C", "D", "Q" };
+	const uint8_t BUS[] = { BUS_ADDRESS, BUS_RAS, BUS_CAS, BUS_D, BUS_Q };
+	for (uint8_t index = 0; index < sizeof(BUS) / sizeof(uint8_t); ++index) {
+		if (tag.equals(LABELS[index])) {
+			int start = 0, stop = 0;
+			ram.bus[BUS[index]].count = 0;
+			while ((stop = data.indexOf(' ', start)) > -1) {
+				ram.bus[BUS[index]].pins[ram.bus[BUS[index]].count++] = data.substring(start, stop++).toInt() - 1;
+				start = stop;
+			}
+			ram.bus[BUS[index]].pins[ram.bus[BUS[index]].count++] = data.substring(start).toInt() - 1;
+			ram.bus[BUS[index]].high = 1 << ram.bus[BUS[index]].count;
+			return true;
+		}
 	}
+	return false;
 }
 
-void ic_test_sram(IC& ic) {
-	switch (sram_identify(worker.code.toInt())) {
-	case SRAM_2114:
-		// FIO
-		// Time elapsed 10.97
+bool ic_parse_signal(String& tag, String& data) {
+	const char* LABELS[] = { "CS", "RAS", "CAS", "WE", "OE", "GND", "VCC" };
+	const uint8_t SIGNALS[] = { SIGNAL_CS, SIGNAL_RAS, SIGNAL_CAS, SIGNAL_WE, SIGNAL_OE, SIGNAL_GND, SIGNAL_VCC };
+	for (uint8_t index = 0; index < sizeof(SIGNALS) / sizeof(uint8_t); ++index) {
+		if (tag.equals(LABELS[index])) {
+			ram.signals[SIGNALS[index]] = data.toInt() - 1;
+			return true;
+		}
+	}
+	return false;
+}
+
+void ic_parse_ram(IC& ic) {
+	ram.count = ic.count;
+	// Reset
+	ram.bus[BUS_RAS].pins = RAS;
+	ram.bus[BUS_CAS].pins = CAS;
+	ram.bus[BUS_D].pins = D;
+	ram.bus[BUS_Q].pins = Q;
+	for (uint8_t index = 0; index < SIGNAL_COUNT; ++index) {
+		ram.signals[index] = -1;
+	}
+	if (lines[0]->equals("DRAM")) {
+		ic.type = TYPE_DRAM;
+		Debugln("DRAM");
+	}
+	if (lines[0]->equals("SRAM")) {
 		ic.type = TYPE_SRAM;
-		ic.description = SRAM_1K_X4;
-		sram = sram2114;
-		break;
-	default:
-		break;
+		Debugln("SRAM");
+	}
+	// Parse
+	for (uint8_t index = 1; index < lines.count(); ++index) {
+		int stop = lines[index]->indexOf(' ');
+		String* line = lines[index];
+		String tag = line->substring(0, stop);
+		String data = line->substring(stop + 1);
+		Debug("tag [");
+		Debug(tag);
+		if (ic_parse_signal(tag, data) || ic_parse_bus(tag, data)) {
+			Debugln("]");
+		} else {
+			Serial.println("] unknown");
+		}
+	}
+	// Decrease data bus
+	ram.bus[BUS_D].high -= 1;
+	ram.bus[BUS_Q].high -= 1;
+	Debug("signals ");
+	for (uint8_t index = 0; index < SIGNAL_COUNT; ++index) {
+		if (index) {
+			Debug(", ");
+		}
+		Debug(ram.signals[index]);
+	}
+	for (uint8_t index = 0; index < BUS_COUNT; ++index) {
+		Debugln();
+		Debug(RAM_BUS[index]);
+		Debug(" ");
+		Bus bus = ram.bus[index];
+		Debug(bus.count);
+		Debug(" 0b");
+		Debugln(bus.high, BIN);
+		for (uint8_t index = 0; index < bus.count; ++index) {
+			if (index) {
+				Debug(", ");
+			}
+			Debug(bus.pins[index]);
+		}
+		Debugln();
 	}
 }
 
 void ic_test_ram() {
+	String line;
 	IC ic;
-	ic.code = worker.code;
-
-	worker.found = true;
-	worker.index = 0;
-	ic_test_dram(ic);
-	ic_test_sram(ic);
-	if (ic.type != TYPE_NONE) {
-		worker.found = true;
-		worker.package.count = ic.type == TYPE_DRAM ? dram.count : sram.count;
-		ic_package_create();
-		ic_package_output();
-		ics.push(new IC(ic));
-		ui_draw_content();
-		switch (ic.type) {
-		case TYPE_DRAM:
-			ic_dram(dram);
-			break;
-		case TYPE_SRAM:
-			ic_sram(sram);
-			break;
+	File file = fat.open(RAMFILE);
+	if (file) {
+		worker.indicator = 0;
+		worker.found = false;
+		while (file.available()) {
+			file.readStringUntil('$');
+			if (!file.available()) {
+				// Avoid timeout at the end of file
+				break;
+			}
+			ic.code = file.readStringUntil('\n');
+			ic.description = file.readStringUntil('\n');
+			ic.count = file.readStringUntil('\n').toInt();
+			if (worker.code.toInt() == ic.code.toInt()) {
+				worker.found = true;
+				worker.index = 0;
+				worker.success = 0;
+				worker.failure = 0;
+				worker.package.count = ic.count;
+				ic_package_create();
+				ic_package_output();
+				ics.push(new IC(ic));
+				ui_draw_content();
+				while (file.peek() != '$') {
+					line = file.readStringUntil('\n');
+					line.trim();
+					lines.push(new String(line));
+				}
+				break;
+			} else {
+				ui_draw_indicator(COLOR_SKIP);
+			}
+#if CAPTURE
+			if (ts_touched()) {
+				sd_screen_capture();
+			}
+#endif
 		}
-		ic_package_idle();
+		file.close();
+		if (worker.found) {
+			ic_parse_ram(ic);
+			switch (ic.type) {
+			case TYPE_DRAM:
+				ram.idle = &ic_dram_idle;
+				ram.fill = &ic_dram_fill;
+				break;
+			case TYPE_SRAM:
+				ram.idle = &ic_sram_idle;
+				ram.fill = &ic_sram_fill;
+				break;
+			}
+			ic_ram();
+#if CAPTURE
+			sd_screen_capture();
+#endif
+		}
+		worker.state = state_tested;
+	} else {
+		worker.state = state_media;
 	}
-	worker.state = state_tested;
 	ui_draw_screen();
 }
 
@@ -1773,7 +1451,7 @@ void loop() {
 	if (worker.state == state) {
 		switch (worker.state) {
 		case state_keyboard:
-			for (unsigned int index = 0; index < button_count; ++index) {
+			for (uint8_t index = 0; index < button_count; ++index) {
 				if (buttons[index].contains(worker.x, worker.y)) {
 					buttons[index].press(true);
 				} else {
@@ -1832,7 +1510,7 @@ void loop() {
 			break;
 		case state_identified:
 			if (ics.count() > 1) {
-				for (unsigned int index = 0; index < button_escape; ++index) {
+				for (uint8_t index = 0; index < button_escape; ++index) {
 					if (buttons[index].contains(worker.x, worker.y)) {
 						buttons[index].press(true);
 					} else {

@@ -1,15 +1,10 @@
 // Language
-// � 2020 Patrick Lafarguette
+// © 2020 Patrick Lafarguette
 
 #ifndef LANGUAGUE_H_
 #define LANGUAGUE_H_
 
 #if ENGLISH
-
-#define RAM_FILL_01 "Fill 0 1"
-#define RAM_FILL_10 "Fill 1 0"
-#define RAM_FILL_00 "Fill 0 0"
-#define RAM_FILL_11 "Fill 1 1"
 
 #define TIME_ELAPSED "Time elapsed "
 
@@ -42,19 +37,7 @@
 #define _HIGH "H"
 #define SPACE " "
 
-#define DRAM_64K_X1 "65,536 x 1 dynamic random-access memory"
-#define DRAM_256K_X1 "262,144 x 1 dynamic random-access memory"
-#define DRAM_16K_X4 "16,384 x 4 dynamic random-access memory"
-#define DRAM_256K_X4 "262,144 x 4 dynamic random-access memory"
-
-#define SRAM_1K_X4 "1,024 x 4 static random-access memory"
-
 #elif FRENCH
-
-#define RAM_FILL_01 "Remplissage 0 1"
-#define RAM_FILL_10 "Remplissage 1 0"
-#define RAM_FILL_00 "Remplissage 0 0"
-#define RAM_FILL_11 "Remplissage 1 1"
 
 #define TIME_ELAPSED "Temps écoulé "
 
@@ -86,13 +69,6 @@
 #define _LOW "L"
 #define _HIGH "H"
 #define SPACE " "
-
-#define DRAM_64K_X1 "65 536 x 1 mémoire dynamique à accès aléatoire"
-#define DRAM_256K_X1 "262 144 x 1 mémoire dynamique à accès aléatoire"
-#define DRAM_16K_X4 "16 384 x 4 mémoire dynamique à accès aléatoire"
-#define DRAM_256K_X4 "262 144 x 4 mémoire dynamique à accès aléatoire"
-
-#define SRAM_1K_X4 "1 024 x 4 mémoire statique à accès aléatoire"
 
 #endif
 

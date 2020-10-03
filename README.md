@@ -22,8 +22,7 @@ ICT est constitué de plusieurs éléments.
 En ce qui concerne l'écran, il existe de nombreux modèles avec différents contrôleurs. Il faudra en conséquence adapter la gestion de l'écran.
 L'écran utilisé est parfaitement géré par la librairie MCUFRIEND_kbv pour l'affichage et la librairie Adafruit TouchScreen pour le tactile.
 
-
-Le fichier **database.txt** doit être copié à la racine de la carte micro SD.
+Les fichiers **logic.txt** et **ram.txt** doivent être copiés à la racine de la carte micro SD.
 ### Logiciel
 Pour développer l'application, l'IDE Eclipse, le plugin Sloeber et le core officiel Arduino sont utilisés :
 - [Eclipse CDT](https://www.eclipse.org/cdt/) 2020-06
