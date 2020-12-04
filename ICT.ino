@@ -1,6 +1,11 @@
 // IC Tester
 // © 2020 Patrick Lafarguette
 //
+// 02/11/2020	1.4.1
+//				Minor modifications.
+//
+// 03/10/2020	1.4.0
+//
 // 21/09/2020	Minor modifications.
 //
 // 18/09/2020	Move RAM definition to file.
@@ -223,6 +228,7 @@ Adafruit_GFX_Button buttons[button_count];
 /////////
 // Bus //
 /////////
+
 const uint16_t DATA[] = {
 		(uint16_t)(1 << 0),
 		(uint16_t)(1 << 1),
@@ -570,7 +576,7 @@ void sd_screen_capture() {
 	static unsigned int index = 0;
 	String filename("image.");
 	filename += index++;
-	filename += ".bus";
+	filename += ".data";
 	Serial.print("Save ");
 	Serial.print(filename);
 	uint16_t* pixels = (uint16_t*)malloc(sizeof(uint16_t) * TFT_WIDTH);
@@ -733,8 +739,8 @@ void ui_draw_screen() {
 		ui_draw_header(true);
 		// Version
 		tft.setTextSize(2);
-		ui_draw_center(F("version 1.3.0"), tft.getCursorY());
-		ui_draw_center(F("14/09/2020"), tft.getCursorY());
+		ui_draw_center(F("version 1.4.1"), tft.getCursorY());
+		ui_draw_center(F("02/11/2020"), tft.getCursorY());
 		// Author
 		tft.setTextColor(TFT_WHITE);
 		ui_draw_center(F("Patrick Lafarguette"), AREA_CONTENT + 32);

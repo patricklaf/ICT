@@ -14,8 +14,8 @@ Q 14
 $41256
 262144 x 1 dynamic random-access memory
 16
-RAS 4
 DRAM
+RAS 4
 CAS 15
 WE 3 
 GND 16
