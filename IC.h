@@ -6,10 +6,13 @@
 
 #include "Arduino.h"
 
-#define ZIF_COUNT 20
+#define ZIF_COUNT 40
 
 // Package pins
-const uint8_t ZIF[ZIF_COUNT] = { 30, 32, 34, 36, 38, 40, 42, 44, 50, 48, 49, 47, 45, 43, 41, 39, 37, 35, 33, 31 };
+const uint8_t ZIF[ZIF_COUNT] = {
+		23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, A11, A10, A9, A8,
+		A12, A13, A14, A15, 52, 50, 48, 46, 44, 42, 40, 38, 36, 34, 32, 30, 28, 26, 24, 22
+};
 
 enum {
 	TYPE_NONE,

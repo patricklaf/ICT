@@ -1,5 +1,22 @@
-// IC Tester
+// ICT
 // © 2020 Patrick Lafarguette
+//
+// 04/12/2020	2.0.0
+//				Minor fixes.
+//
+// 19/11/2020	RAM support. ZX81-32K extension.
+//
+// 18/11/2020	DRAM support. 4116 family.
+//
+// 17/11/2020	Optimization (buttons).
+//
+// 16/11/2020	Keyboard support for alphanumeric input.
+//
+// 15/11/2020	SRAM support. 61256 family.
+//
+// 09/11/2020	Increase ZIF pins to 40.
+//				SRAM support. 6116 family.
+//				Add /OE support for SRAM.
 //
 // 02/11/2020	1.4.1
 //				Minor modifications.
@@ -53,6 +70,7 @@
 
 #include "IC.h"
 #include "RAM.h"
+#include "Keyboard.h"
 #include "Stack.h"
 
 // Set one of the language to 1.
@@ -82,7 +100,7 @@ Stack<String*> lines;
 #define TEST 0 // 1 to enable test cases, 0 to disable
 #define TIME 1 // 1 to enable time, 0 to disable
 #define DEBUG 1 // 1 to enable serial debug messages, 0 to disable
-#define CAPTURE 0 // 1 to enable screen captures,  0 to disable
+#define CAPTURE 0 // 1 to enable screen captures, 0 to disable
 
 #if DEBUG
 #define Debug(...) Serial.print(__VA_ARGS__)
@@ -99,8 +117,7 @@ typedef enum states {
 	state_identify_logic,
 	state_test_logic,
 	state_test_ram,
-	state_package_dip14, // Only logic
-	state_package_dip16, // Only logic
+	state_package_dip, // Only logic
 	state_keyboard,
 	state_identified,
 	state_tested,
@@ -120,33 +137,24 @@ typedef enum buttons {
 	// Identify logic
 	button_dip14 = 0,
 	button_dip16,
+	// Test
+	button_redo = 0,
+	// Keyboard
+	button_enter = 0,
+	button_clear,
+	button_del,
 	// Identified
 	button_test = 0,
 	button_previous,
 	button_next,
 	button_escape,
-	// Test
-	button_redo = 0,
-	// Keyboard
-	button_zero = 0,
-	button_one,
-	button_two,
-	button_three,
-	button_four,
-	button_five,
-	button_six,
-	button_seven,
-	button_eight,
-	button_nine,
-	button_enter,
-	button_clear,
-	button_del,
 	button_count,
 } buttons_t;
 
 typedef struct Worker {
 	uint8_t state;
 	uint8_t action;
+	bool interrupted;
 	// TFT
 	int x;
 	int y;
@@ -188,10 +196,10 @@ Worker worker;
 
 // UI input
 #define INPUT_HEIGHT 54
-#define TEXT_X 8
-#define TEXT_Y 12
-#define TEXT_SIZE 4
-#define TEXT_LENGTH 7
+#define INPUT_X 8
+#define INPUT_Y 12
+#define INPUT_SIZE 4
+#define INPUT_LENGTH 12
 
 // UI RAM
 #define RAM_TOP 140
@@ -218,6 +226,8 @@ Worker worker;
 #define COLOR_KEY TFT_BLACK
 #define COLOR_CODE TFT_WHITE
 #define COLOR_DESCRIPTION TFT_CYAN
+
+Keyboard keyboard(&tft, INPUT_HEIGHT + 1);
 
 Adafruit_GFX_Button buttons[button_count];
 
@@ -313,12 +323,18 @@ void ic_ram() {
 		ic_pin_mode(worker.package.pins[ram.bus[BUS_Q].pins[index]], INPUT);
 	}
 	// VCC, GND
+	if ((ram.signals[SIGNAL_VBB] == 0) && (ram.signals[SIGNAL_VDD] == 7)) {
+		// Power rails to -5 and +12 V
+		Debugln("Enable -5 and +12 V");
+		digitalWrite(A7, HIGH);
+	}
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_GND]], LOW);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_VCC]], HIGH);
 	// Idle
 	ram.idle();
 	// Test
 	worker.indicator = 0;
+#if 0
 	ic_bus_data(ram.bus[BUS_D], LOW, true);
 	ram.fill(true);
 	ic_bus_data(ram.bus[BUS_D], HIGH, true);
@@ -327,7 +343,27 @@ void ic_ram() {
 	ram.fill(false);
 	ic_bus_data(ram.bus[BUS_D], HIGH, false);
 	ram.fill(false);
+#else
+	for (uint8_t loop = 0; loop < 4; ++loop) {
+		// 0 00 0 false true
+		// 1 01 0 false true
+		// 2 10 1 true false
+		// 3 11 1 true false
+		bool alternate = !(loop >> 1);
+		// 0 00 0 LOW
+		// 1 01 1 HIGH
+		// 2 10 0 LOW
+		// 3 11 1 HIGH
+		ic_bus_data(ram.bus[BUS_D], loop & 0x01, alternate);
+		ram.fill(alternate);
+	}
+#endif
 	// Shutdown
+	if ((ram.signals[SIGNAL_VBB] == 0) && (ram.signals[SIGNAL_VDD] == 7)) {
+		Debugln("Disable -5 and +12 V");
+		// Power rails to TTL
+		digitalWrite(A7, LOW);
+	}
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_VCC]], LOW);
 #if TIME
 	unsigned long stop = millis();
@@ -423,11 +459,6 @@ void ic_dram_fill(const bool alternate = false) {
 			ram.bus[BUS_D].value ^= mask;
 		}
 		ui_draw_indicator((worker.success ? (worker.failure ? COLOR_MIXED : COLOR_GOOD) : COLOR_BAD));
-#if CAPTURE
-		if (ts_touched()) {
-			sd_screen_capture();
-		}
-#endif
 	}
 	ui_draw_ram();
 }
@@ -439,6 +470,9 @@ void ic_dram_fill(const bool alternate = false) {
 void ic_sram_idle() {
 	// Idle
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
+	if (ic_ram_signal(SIGNAL_OE)) {
+		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], HIGH);
+	}
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
 }
 
@@ -459,10 +493,19 @@ void ic_sram_read() {
 	// Address
 	ic_bus_write(ram.bus[BUS_ADDRESS]);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], LOW);
+	// OE
+	bool oe = ic_ram_signal(SIGNAL_OE);
+	if (oe) {
+		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], LOW);
+	}
 	// Q
 	ic_bus_read(ram.bus[BUS_Q]);
 	// Idle
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
+	// OE
+	if (oe) {
+		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], HIGH);
+	}
 }
 
 void ic_sram_fill(const bool alternate = false) {
@@ -496,11 +539,6 @@ void ic_sram_fill(const bool alternate = false) {
 		}
 		ram.bus[BUS_D].value ^= mask;
 		ui_draw_indicator((worker.success ? (worker.failure ? COLOR_MIXED : COLOR_GOOD) : COLOR_BAD));
-#if CAPTURE
-		if (ts_touched()) {
-			sd_screen_capture();
-		}
-#endif
 	}
 	ui_draw_ram();
 }
@@ -519,14 +557,13 @@ bool ts_touched() {
 	pinMode(XM, OUTPUT);
 	digitalWrite(YP, HIGH);
 	digitalWrite(XM, HIGH);
-	if (point.z > TS_MIN && point.z < TS_MAX) {
+	if (point.z != 0) {
 		// TODO adapt code to your display
 		worker.x = map(point.y, TS_LEFT, TS_RT, TFT_WIDTH, 0);
 		worker.y = map(point.x, TS_TOP, TS_BOT, 0, TFT_HEIGHT);
-		return true;
-	} else {
-		worker.x = 0xFFFF;
-		worker.y = 0xFFFF;
+		if (point.z > TS_MIN && point.z < TS_MAX) {
+			return true;
+		}
 	}
 	return false;
 }
@@ -567,11 +604,6 @@ void tft_init() {
 
 #if CAPTURE
 
-#define CAPTURE_KEYBOARD 0 // 1 to enable images on keyboard event,  0 to disable
-#define CAPTURE_STATE 0 // 1 to enable images on state change,  0 to disable
-#define CAPTURE_ERROR 0 // 1 to enable images on error,  0 to disable
-#define CAPTURE_CONTENT 1 // 1 to enable images on content change,  0 to disable
-
 void sd_screen_capture() {
 	static unsigned int index = 0;
 	String filename("image.");
@@ -610,7 +642,7 @@ void ui_draw_center(const __FlashStringHelper* text, int16_t y) {
 	tft.println(text);
 }
 
-void ui_draw_wrap(const String &string, const uint8_t size) {
+void ui_draw_wrap(const String& string, const uint8_t size) {
 	unsigned int start = 0;
 	unsigned int index = start;
 	tft.setTextSize(size);
@@ -643,8 +675,7 @@ void ui_draw_error(const __FlashStringHelper* text) {
 
 void ui_draw_indicator(const uint16_t color) {
 	tft.fillRect(worker.indicator * 20 + 2, 222, 16, 16, color);
-	worker.indicator++;
-	worker.indicator %= 16;
+	++worker.indicator %= 16;
 	tft.fillRect(worker.indicator * 20 + 2, 222, 16, 16, COLOR_BACKGROUND);
 }
 
@@ -657,7 +688,7 @@ void ui_draw_percentage() {
 void ui_draw_ram() {
 	unsigned int x = (worker.ram - 2) * RAM_BOX + (TFT_WIDTH / 2);
 	tft.fillRect(x, RAM_TOP, RAM_SIZE, RAM_SIZE, worker.color);
-	switch (worker.ram) {
+	switch (worker.ram++) {
 	case 0: // 0 1
 		tft.drawFastHLine(x, RAM_BOTTOM - 4, RAM_HALF, TFT_BLACK);
 		tft.drawFastHLine(x + RAM_HALF, RAM_TOP + 4, RAM_HALF, TFT_BLACK);
@@ -675,7 +706,6 @@ void ui_draw_ram() {
 		tft.drawFastHLine(x, RAM_TOP + 4, RAM_SIZE, TFT_BLACK);
 		break;
 	}
-	worker.ram++;
 }
 
 void ui_draw_header(bool erase) {
@@ -684,28 +714,15 @@ void ui_draw_header(bool erase) {
 	}
 	tft.setTextColor(COLOR_TEXT);
 	tft.setTextSize(5);
-	ui_draw_center(F("IC TESTER"), 2);
+	ui_draw_center(F("ICT"), 2);
 }
 
-void ui_draw_enter() {
-	buttons[button_enter].initButton(&tft, BUTTON_X + (BUTTON_W + BUTTON_SPACING_X) * 0.5,
+void ui_draw_button(char* label) {
+	// ENTER, TEST or REDO, always button 0 and same shape and color
+	buttons[0].initButton(&tft, BUTTON_X + (BUTTON_W + BUTTON_SPACING_X) * 0.5,
 			BUTTON_Y + 2 * (BUTTON_H + BUTTON_SPACING_Y), 2 * BUTTON_W + BUTTON_SPACING_X, BUTTON_H,
-			COLOR_ENTER, COLOR_ENTER, COLOR_LABEL, (char*)"ENTER", BUTTON_TEXTSIZE);
-	buttons[button_enter].drawButton();
-}
-
-void ui_draw_test() {
-	buttons[button_test].initButton(&tft, BUTTON_X + (BUTTON_W + BUTTON_SPACING_X) * 0.5,
-			BUTTON_Y + 2 * (BUTTON_H + BUTTON_SPACING_Y), 2 * BUTTON_W + BUTTON_SPACING_X, BUTTON_H,
-			COLOR_ENTER, COLOR_ENTER, COLOR_LABEL, (char*)"TEST", BUTTON_TEXTSIZE);
-	buttons[button_test].drawButton();
-}
-
-void ui_draw_redo() {
-	buttons[button_redo].initButton(&tft, BUTTON_X + (BUTTON_W + BUTTON_SPACING_X) * 0.5,
-			BUTTON_Y + 2 * (BUTTON_H + BUTTON_SPACING_Y), 2 * BUTTON_W + BUTTON_SPACING_X, BUTTON_H,
-			COLOR_ENTER, COLOR_ENTER, COLOR_LABEL, (char*)"REDO", BUTTON_TEXTSIZE);
-	buttons[button_redo].drawButton();
+			COLOR_ENTER, COLOR_ENTER, COLOR_LABEL, label, BUTTON_TEXTSIZE);
+	buttons[0].drawButton();
 }
 
 void ui_draw_escape() {
@@ -739,8 +756,8 @@ void ui_draw_screen() {
 		ui_draw_header(true);
 		// Version
 		tft.setTextSize(2);
-		ui_draw_center(F("version 1.4.1"), tft.getCursorY());
-		ui_draw_center(F("02/11/2020"), tft.getCursorY());
+		ui_draw_center(F("version 2.0.0"), tft.getCursorY());
+		ui_draw_center(F("04/12/2020"), tft.getCursorY());
 		// Author
 		tft.setTextColor(TFT_WHITE);
 		ui_draw_center(F("Patrick Lafarguette"), AREA_CONTENT + 32);
@@ -757,9 +774,6 @@ void ui_draw_screen() {
 		const char* items[] = { IDENTIFY_LOGIC, TEST_LOGIC, TEST_RAM };
 		ui_draw_menu(items, 3);
 	}
-#if CAPTURE
-		sd_screen_capture();
-#endif
 		break;
 	case state_identify_logic: {
 		const char* items[] = { DIP14_PACKAGE, DIP16_PACKAGE };
@@ -767,8 +781,7 @@ void ui_draw_screen() {
 		ui_draw_escape();
 	}
 		break;
-	case state_package_dip14:
-	case state_package_dip16:
+	case state_package_dip:
 		worker.action = action_identify_logic;
 		worker.index = -1;
 		ics.clear();
@@ -782,17 +795,8 @@ void ui_draw_screen() {
 		tft.fillScreen(TFT_NAVY);
 		tft.drawRect(0, 0, TFT_WIDTH, INPUT_HEIGHT, TFT_YELLOW);
 		tft.drawRect(1, 1, TFT_WIDTH - 2, INPUT_HEIGHT - 2, TFT_YELLOW);
-		for (uint8_t row = 0; row < 2; ++row) {
-			for (uint8_t column = 0; column < 5; ++column) {
-				buttons[column + row * 5].initButton(&tft,
-						BUTTON_X + column * (BUTTON_W + BUTTON_SPACING_X),
-						BUTTON_Y + row * (BUTTON_H + BUTTON_SPACING_Y),
-						BUTTON_W, BUTTON_H, COLOR_KEY, COLOR_KEY, COLOR_LABEL,
-						(char*)String(column + row * 5).c_str(), BUTTON_TEXTSIZE);
-				buttons[column + row * 5].drawButton();
-			}
-		}
-		ui_draw_enter();
+		keyboard.draw();
+		ui_draw_button((char*)"ENTER");
 		buttons[button_clear].initButton(&tft, BUTTON_X + (BUTTON_W + BUTTON_SPACING_X) * 2.5,
 				BUTTON_Y + 2 * (BUTTON_H + BUTTON_SPACING_Y), 2 * BUTTON_W + BUTTON_SPACING_X, BUTTON_H,
 				COLOR_KEY, COLOR_KEY, COLOR_LABEL, (char*)"CLR", BUTTON_TEXTSIZE);
@@ -823,7 +827,7 @@ void ui_draw_screen() {
 	case state_identified:
 		ui_clear_footer();
 		if (ics.count()) {
-			ui_draw_test();
+			ui_draw_button((char*)"TEST");
 			if (ics.count() > 1) {
 				// Add navigator
 				buttons[button_previous].initButton(&tft, BUTTON_X + 2 * (BUTTON_W + BUTTON_SPACING_X),
@@ -840,9 +844,6 @@ void ui_draw_screen() {
 			ui_draw_content();
 		}
 		ui_draw_escape();
-#if CAPTURE
-		sd_screen_capture();
-#endif
 		break;
 	case state_tested:
 		ui_clear_footer();
@@ -863,14 +864,11 @@ void ui_draw_screen() {
 				case action_test_ram:
 					break;
 			}
-			ui_draw_redo();
+			ui_draw_button((char*)"REDO");
 		} else {
 			ui_draw_content();
 		}
 		ui_draw_escape();
-#if CAPTURE
-		sd_screen_capture();
-#endif
 		break;
 	}
 }
@@ -922,9 +920,42 @@ void ui_draw_content() {
 	tft.setCursor(0, tft.getCursorY() + 4);
 	tft.setTextColor(COLOR_DESCRIPTION);
 	ui_draw_wrap(ics[worker.index]->description, 2);
-#if CAPTURE_CONTENT
-	sd_screen_capture();
-#endif
+}
+
+void ui_draw_ic(int count, bool wide) {
+	tft.fillScreen(COLOR_BACKGROUND);
+	int width = (count / 2) * 12 + 6;
+	int height = wide ? 80 : 40;
+	int left = (tft.width() - width) / 2;
+	int top = (tft.height() - height) / 2;
+	int bottom = top + height;
+	// Body
+	tft.fillRect(left, top, width, height, TFT_BLACK);
+	tft.fillCircleHelper(left + width, tft.height() / 2, 6, 3, 0, COLOR_BACKGROUND);
+	// Pins
+	int x = left + 6;
+	for (int index = 0; index < (count / 2); ++index) {
+		tft.fillRect(x, top - 6, 6, 6, TFT_DARKGREY);
+		tft.fillRect(x, bottom, 6, 6, TFT_DARKGREY);
+		x += 12;
+	}
+}
+
+void ui_draw_pin(int count, bool wide, int pin, uint16_t color) {
+	int width = (count / 2) * 12 + 6;
+	int height = wide ? 80 : 40;
+	int left = (tft.width() - width) / 2;
+	int top = (tft.height() - height) / 2;
+	int bottom = top + height;
+	// Pins
+	int x = left + 6;
+	if (pin < count / 2) {
+		x += ((count / 2) - pin % (count / 2) - 1) * 12;
+	} else {
+		x += (pin - (count / 2)) * 12;
+	}
+	int y = pin < (count / 2) ? top - 6 : bottom;
+	tft.fillRect(x, y, 6, 6, color);
 }
 
 ////////////////////////
@@ -1087,6 +1118,7 @@ void ic_identify_logic() {
 				break;
 			}
 			ic.code = file.readStringUntil('\n');
+			ic.code.trim();
 			ic.description = file.readStringUntil('\n');
 			ic.count = file.readStringUntil('\n').toInt();
 			if (worker.package.count == ic.count) {
@@ -1113,11 +1145,6 @@ void ic_identify_logic() {
 			} else {
 				ui_draw_indicator(COLOR_SKIP);
 			}
-#if CAPTURE
-			if (ts_touched()) {
-				sd_screen_capture();
-			}
-#endif
 		}
 		file.close();
 		worker.state = state_identified;
@@ -1141,9 +1168,10 @@ void ic_test_logic() {
 				break;
 			}
 			ic.code = file.readStringUntil('\n');
+			ic.code.trim();
 			ic.description = file.readStringUntil('\n');
 			ic.count = file.readStringUntil('\n').toInt();
-			if (worker.code.toInt() == ic.code.toInt()) {
+			if (worker.code.equals(ic.code)) {
 				worker.found = true;
 				worker.index = 0;
 				worker.success = 0;
@@ -1161,11 +1189,6 @@ void ic_test_logic() {
 			} else {
 				ui_draw_indicator(COLOR_SKIP);
 			}
-#if CAPTURE
-			if (ts_touched()) {
-				sd_screen_capture();
-			}
-#endif
 		}
 		file.close();
 		if (worker.found) {
@@ -1188,9 +1211,6 @@ void ic_test_logic() {
 				ui_draw_percentage();
 				loop = !ts_touched();
 			}
-#if CAPTURE
-			sd_screen_capture();
-#endif
 		}
 		worker.state = state_tested;
 	} else {
@@ -1219,8 +1239,8 @@ bool ic_parse_bus(String& tag, String& data) {
 }
 
 bool ic_parse_signal(String& tag, String& data) {
-	const char* LABELS[] = { "CS", "RAS", "CAS", "WE", "OE", "GND", "VCC" };
-	const uint8_t SIGNALS[] = { SIGNAL_CS, SIGNAL_RAS, SIGNAL_CAS, SIGNAL_WE, SIGNAL_OE, SIGNAL_GND, SIGNAL_VCC };
+	const char* LABELS[] = { "CS", "RAS", "CAS", "WE", "OE", "GND", "VCC", "VBB", "VDD" };
+	const uint8_t SIGNALS[] = { SIGNAL_CS, SIGNAL_RAS, SIGNAL_CAS, SIGNAL_WE, SIGNAL_OE, SIGNAL_GND, SIGNAL_VCC, SIGNAL_VBB, SIGNAL_VDD };
 	for (uint8_t index = 0; index < sizeof(SIGNALS) / sizeof(uint8_t); ++index) {
 		if (tag.equals(LABELS[index])) {
 			ram.signals[SIGNALS[index]] = data.toInt() - 1;
@@ -1304,9 +1324,10 @@ void ic_test_ram() {
 				break;
 			}
 			ic.code = file.readStringUntil('\n');
+			ic.code.trim();
 			ic.description = file.readStringUntil('\n');
 			ic.count = file.readStringUntil('\n').toInt();
-			if (worker.code.toInt() == ic.code.toInt()) {
+			if (worker.code.equals(ic.code)) {
 				worker.found = true;
 				worker.index = 0;
 				worker.success = 0;
@@ -1325,11 +1346,6 @@ void ic_test_ram() {
 			} else {
 				ui_draw_indicator(COLOR_SKIP);
 			}
-#if CAPTURE
-			if (ts_touched()) {
-				sd_screen_capture();
-			}
-#endif
 		}
 		file.close();
 		if (worker.found) {
@@ -1345,15 +1361,20 @@ void ic_test_ram() {
 				break;
 			}
 			ic_ram();
-#if CAPTURE
-			sd_screen_capture();
-#endif
 		}
 		worker.state = state_tested;
 	} else {
 		worker.state = state_media;
 	}
 	ui_draw_screen();
+}
+
+///////////////////////////////
+// Interrupt Service Routine //
+///////////////////////////////
+
+void isr_user_button() {
+	worker.interrupted = true;
 }
 
 /////////////
@@ -1366,8 +1387,38 @@ void setup() {
 	ic_package_test();
 	while (true) {};
 #endif
+	// Power rails default to TTL
+	digitalWrite(A7, LOW);
+	pinMode(A7, OUTPUT);
+	// User button
+	pinMode(21, INPUT_PULLUP);
+	attachInterrupt(digitalPinToInterrupt(21), isr_user_button, LOW);
 	// TFT setup
 	tft_init();
+#if 0
+	ui_draw_ic(20, false);
+	ui_draw_ic(40, true);
+	// 4116
+	ui_draw_ic(16, false);
+	// VBB -5 V white
+	// VSS GND black
+	// VCC +5 V red
+	// VDD +12 V yellow
+	ui_draw_pin(16, false, 0, TFT_WHITE);
+	ui_draw_pin(16, false, 7, TFT_YELLOW);
+	ui_draw_pin(16, false, 8, TFT_RED);
+	ui_draw_pin(16, false, 15, TFT_BLACK);
+	while (true) {
+		ts_wait();
+		Serial.println("12V, 5V");
+		digitalWrite(A7, HIGH);
+		delay(1000);
+		ts_wait();
+		Serial.println("TTL");
+		digitalWrite(A7, LOW);
+		delay(1000);
+	};
+#endif
 	// SD card
 	worker.state = fat.begin(10) ? state_startup : state_media;
 	// UI
@@ -1437,13 +1488,13 @@ void loop() {
 		case state_identify_logic:
 			if (buttons[button_dip14].contains(worker.x, worker.y)) {
 				Debugln(F("dip 14"));
-				state = state_package_dip14;
+				state = state_package_dip;
 				worker.package.count = 14;
 				ic_package_create();
 			}
 			if (buttons[button_dip16].contains(worker.x, worker.y)) {
 				Debugln(F("dip 16"));
-				state = state_package_dip16;
+				state = state_package_dip;
 				worker.package.count = 16;
 				ic_package_create();
 			}
@@ -1457,76 +1508,66 @@ void loop() {
 	if (worker.state == state) {
 		switch (worker.state) {
 		case state_keyboard:
-			for (uint8_t index = 0; index < button_count; ++index) {
-				if (buttons[index].contains(worker.x, worker.y)) {
-					buttons[index].press(true);
-				} else {
-					buttons[index].press(false);
-				}
-				if (buttons[index].justReleased()) {
-					buttons[index].drawButton();
-#if CAPTURE_KEYBOARD
-					sd_screen_capture();
-#endif
-				}
-				if (buttons[index].justPressed()) {
-					buttons[index].drawButton(true);
-					// 0..9
-					if (index < button_enter) {
-						if (worker.code.length() < TEXT_LENGTH) {
-							worker.code += String(index);
-						}
-						tft.setCursor(TEXT_X, TEXT_Y);
-						tft.setTextColor(COLOR_TEXT, COLOR_BACKGROUND);
-						tft.setTextSize(TEXT_SIZE);
-						tft.print(worker.code);
-					}
-					// Enter
-					if (index == button_enter) {
-						if (worker.code.length()) {
-							switch (worker.action) {
-							case action_test_logic:
-								state = state_test_logic;
-								break;
-							case action_test_ram:
-								state = state_test_ram;
-								break;
-							}
-						} else {
-							state = state_menu;
-						}
-#if CAPTURE_STATE
-						buttons[button_enter].drawButton();
-#endif
-					}
-					// Clear
-					if (index == button_clear) {
-						tft.fillRect(TEXT_X, TEXT_Y, TFT_WIDTH - 2 - TEXT_X, TEXT_SIZE * 8, COLOR_BACKGROUND);
-						worker.code = "";
-					}
-					// Delete
-					if (index == button_del) {
-						worker.code.remove(worker.code.length() - 1, 1);
-						tft.fillRect(TEXT_X + (TEXT_SIZE * 6 * worker.code.length()), TEXT_Y, TEXT_SIZE * 6, TEXT_SIZE * 8, COLOR_BACKGROUND);
-					}
-					// UI debounce
-					delay(100);
-				}
+		if (keyboard.read(worker.x, worker.y, touched)) {
+			if (worker.code.length() < INPUT_LENGTH) {
+				worker.code += keyboard.key();
 			}
+			tft.setCursor(INPUT_X, INPUT_Y);
+			tft.setTextColor(COLOR_TEXT, COLOR_BACKGROUND);
+			tft.setTextSize(INPUT_SIZE);
+			tft.print(worker.code);
+		}
+		for (uint8_t index = button_enter; index < button_escape; ++index) {
+			if (touched && buttons[index].contains(worker.x, worker.y)) {
+				buttons[index].press(true);
+			} else {
+				buttons[index].press(false);
+			}
+			if (buttons[index].justReleased()) {
+				buttons[index].drawButton();
+			}
+			if (buttons[index].justPressed()) {
+				buttons[index].drawButton(true);
+				// Enter
+				if (index == button_enter) {
+					if (worker.code.length()) {
+						switch (worker.action) {
+						case action_test_logic:
+							state = state_test_logic;
+							break;
+						case action_test_ram:
+							state = state_test_ram;
+							break;
+						}
+					} else {
+						state = state_menu;
+					}
+				}
+				// Clear
+				if (index == button_clear) {
+					tft.fillRect(INPUT_X, INPUT_Y, TFT_WIDTH - 2 - INPUT_X, INPUT_SIZE * 8, COLOR_BACKGROUND);
+					worker.code = "";
+				}
+				// Delete
+				if (index == button_del) {
+					worker.code.remove(worker.code.length() - 1, 1);
+					tft.fillRect(INPUT_X + (INPUT_SIZE * 6 * worker.code.length()), INPUT_Y, INPUT_SIZE * 6, INPUT_SIZE * 8, COLOR_BACKGROUND);
+				}
+				// UI debounce
+				delay(100);
+			}
+		}
 			break;
 		case state_identified:
 			if (ics.count() > 1) {
 				for (uint8_t index = 0; index < button_escape; ++index) {
-					if (buttons[index].contains(worker.x, worker.y)) {
+					if (touched && buttons[index].contains(worker.x, worker.y)) {
 						buttons[index].press(true);
 					} else {
 						buttons[index].press(false);
 					}
 					if (buttons[index].justReleased()) {
 						buttons[index].drawButton();
-#if CAPTURE_KEYBOARD
-						sd_screen_capture();
-#endif
 					}
 					if (buttons[index].justPressed()) {
 						buttons[index].drawButton(true);
@@ -1554,12 +1595,15 @@ void loop() {
 		}
 	}
 	if (worker.state != state) {
-#if CAPTURE_STATE
-		sd_screen_capture();
-#endif
 		worker.state = state;
 		ui_draw_screen();
 		Debug(F("State: "));
 		Debugln(worker.state);
 	}
+#if CAPTURE
+	if (worker.interrupted) {
+		sd_screen_capture();
+		worker.interrupted = false;
+	}
+#endif
 }

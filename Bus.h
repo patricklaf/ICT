@@ -4,7 +4,7 @@
 #ifndef BUS_H_
 #define BUS_H_
 
-#include "Arduino.h"
+#include <Arduino.h>
 
 typedef struct Bus {
 	uint8_t *pins;

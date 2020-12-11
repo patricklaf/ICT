@@ -4,7 +4,6 @@
 #ifndef RAM_H_
 #define RAM_H_
 
-#include "Arduino.h"
 #include "Bus.h"
 
 // http://pcbjunkie.net/index.php/resources/ram-info-and-cross-reference-page/
@@ -20,8 +19,10 @@ enum {
 	SIGNAL_CAS,
 	SIGNAL_WE, // /W
 	SIGNAL_OE, // /G
-	SIGNAL_GND, // VDD
-	SIGNAL_VCC,
+	SIGNAL_GND, // VSS
+	SIGNAL_VCC, // +5V
+	SIGNAL_VBB, // -5V
+	SIGNAL_VDD, // +12V
 	SIGNAL_COUNT
 };
 
