@@ -4,19 +4,19 @@ ICT est un testeur de circuits intégrés
 ICT permet d'identifier et de vérifier le fonctionnement de circuits logiques des séries [4000](https://fr.wikipedia.org/wiki/Liste_des_circuits_int%C3%A9gr%C3%A9s_de_la_s%C3%A9rie_4000) et [7400](https://fr.wikipedia.org/wiki/Liste_des_circuits_int%C3%A9gr%C3%A9s_de_la_s%C3%A9rie_7400).
 
 Il permet également de vérifier le fonctionnement de composants mémoires.
-- Mémoires dynamiques 4164, 41256, 4416 et 44256.
-- Mémoires statiques 2114.
+- Mémoires dynamiques 4116, 4164, 41256, 4416 et 44256.
+- Mémoires statiques 2114, 6116 et 61256.
 
-ICT est une évolution du logiciel du projet [Smart IC Tester](https://www.instructables.com/id/Smart-IC-Tester/) de Akshay Baweja.
+Il est possible de supporter de nouveaux composants en ajoutant leur définition dans les fichiers de paramètres.
 
-La partie matérielle est identique.
+ICT est inspiré du projet [Smart IC Tester](https://www.instructables.com/id/Smart-IC-Tester/) de Akshay Baweja.
 
 ## Installation
 ICT est constitué de plusieurs éléments.
 ### Matériel
 - Une carte [Arduino Mega 2560](https://store.arduino.cc/arduino-mega-2560-rev3).
 - Un écran TFT tactile avec lecteur de carte micro SD intégré.
-- La carte d'extension [IC Tester](https://www.instructables.com/id/Smart-IC-Tester/) de Akshay Baweja.
+- La carte d'extension ICT version 2.0.
 - Une carte micro SD.
 
 En ce qui concerne l'écran, il existe de nombreux modèles avec différents contrôleurs. Il faudra en conséquence adapter la gestion de l'écran.
@@ -27,14 +27,14 @@ Les fichiers **logic.txt** et **ram.txt** doivent être copiés à la racine de 
 Pour développer l'application, l'IDE Eclipse, le plugin Sloeber et le core officiel Arduino sont utilisés :
 - [Eclipse CDT](https://www.eclipse.org/cdt/) 2020-06
 - [Sloeber](https://eclipse.baeyens.it/) 4.3.3
-- Core officiel [Arduino AVR](https://github.com/arduino/ArduinoCore-avr) 1.8.2
+- Core officiel [Arduino AVR](https://github.com/arduino/ArduinoCore-avr) 1.8.3
 > Il est toutefois possible d'utiliser l'IDE Arduino pour compiler l'application.
 
 #### Librairies
 L'application utilise plusieurs librairies :
-- Adafruit BusIO 1.5.0
-- Adafruit GFX Library 1.10.1
-- Adafruit TouchScreen 1.1.0
+- Adafruit BusIO 1.6.0
+- Adafruit GFX Library 1.10.3
+- Adafruit TouchScreen 1.1.1
 - MCUFRIEND_kbv 2.9.9
 - SdFat 1.1.4
 #### Modifications
@@ -52,6 +52,12 @@ Ces portions de code sont signalées par un commentaire.
 // TODO adapt code to your display
 ```
 ## Utilisation
+- L'orientation normale du testeur en utilisation est écran en bas, support ZIF en haut.
+- La broche 1 du composant à tester est positionnée en haut, à droite du support ZIF, vers le levier de verrouillage, comme indiqué par le pictogramme, à droite du support ZIF.
+- Des repères sur le PCB, au bord supérieur du support ZIF indique la position du composant en fonction du nombre de broches. 
+- Le bouton poussoir à droite du support ZIF est un bouton utilisateur qui permet d'interrompre une opération.
+- Le bouton poussoir en haut, à gauche sous l'écran est un bouton de réinitialisation.
+
 ### Identification de circuits logiques
 - Insérez le circuit à identifier dans le support ZIF.
 - Sélectionnez l'option **identify logic**.
