@@ -1,5 +1,12 @@
 // ICT
-// © 2020 Patrick Lafarguette
+// © 2020-2021 Patrick Lafarguette
+//
+// 25/01/2021	2.1.0
+//				DRAM support. 4464 family.
+//				RAM search case insensitive.
+//				Add file not found error.
+//				Add support for SdFat 2.x.x.
+//				Add aliases support for RAM.
 //
 // 04/12/2020	2.0.0
 //				Minor fixes.
@@ -92,7 +99,32 @@ MCUFRIEND_kbv tft;
 TouchScreen ts = TouchScreen(XP, YP, XM, YM, 345);
 
 // SD
+#if SD_FAT_VERSION < 20000
+
+// Modify SdFatConfig.h
+//
+//#define ENABLE_SOFTWARE_SPI_CLASS 1
+
 SdFatSoftSpi<12, 11, 13> fat;
+
+#else
+
+// Modify SdFatConfig.h
+//
+// #define SPI_DRIVER_SELECT 2
+
+const uint8_t SD_CS_PIN = 10;
+const uint8_t SOFT_MISO_PIN = 12;
+const uint8_t SOFT_MOSI_PIN = 11;
+const uint8_t SOFT_SCK_PIN  = 13;
+
+SoftSpiDriver<SOFT_MISO_PIN, SOFT_MOSI_PIN, SOFT_SCK_PIN> spi;
+
+#define SDCONFIG SdSpiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(0), &spi)
+
+SdFat fat;
+
+#endif
 
 Stack<IC*> ics;
 Stack<String*> lines;
@@ -602,7 +634,16 @@ void tft_init() {
 // SD card //
 /////////////
 
+bool sd_begin() {
+#if SD_FAT_VERSION < 20000
+	return fat.begin(10);
+#else
+	return fat.begin(SDCONFIG);
+#endif
+}
+
 #if CAPTURE
+
 
 void sd_screen_capture() {
 	static unsigned int index = 0;
@@ -756,8 +797,8 @@ void ui_draw_screen() {
 		ui_draw_header(true);
 		// Version
 		tft.setTextSize(2);
-		ui_draw_center(F("version 2.0.0"), tft.getCursorY());
-		ui_draw_center(F("04/12/2020"), tft.getCursorY());
+		ui_draw_center(F("version 2.1.0"), tft.getCursorY());
+		ui_draw_center(F("25/01/2021"), tft.getCursorY());
 		// Author
 		tft.setTextColor(TFT_WHITE);
 		ui_draw_center(F("Patrick Lafarguette"), AREA_CONTENT + 32);
@@ -1149,6 +1190,8 @@ void ic_identify_logic() {
 		file.close();
 		worker.state = state_identified;
 	} else {
+		Debug(LOGICFILE);
+		Debugln(F("not found"));
 		worker.state = state_media;
 	}
 	ui_draw_screen();
@@ -1171,7 +1214,7 @@ void ic_test_logic() {
 			ic.code.trim();
 			ic.description = file.readStringUntil('\n');
 			ic.count = file.readStringUntil('\n').toInt();
-			if (worker.code.equals(ic.code)) {
+			if (worker.code.equalsIgnoreCase(ic.code)) {
 				worker.found = true;
 				worker.index = 0;
 				worker.success = 0;
@@ -1214,6 +1257,8 @@ void ic_test_logic() {
 		}
 		worker.state = state_tested;
 	} else {
+		Debug(LOGICFILE);
+		Debugln(F("not found"));
 		worker.state = state_media;
 	}
 	ui_draw_screen();
@@ -1323,12 +1368,96 @@ void ic_test_ram() {
 				// Avoid timeout at the end of file
 				break;
 			}
+			// Aliases
+			bool first = true;
+			bool loop = true;
+			while (loop) {
+				line = file.readStringUntil('\n');
+				if (line[0] == '$' || first) {
+					// Code and aliases
+					if (worker.found == false) {
+						String code;
+						int start = first ? 0 : 1;
+						int stop = 0;
+						first = false;
+						line.trim();
+						while ((stop = line.indexOf(':', start)) > -1) {
+							code = line.substring(start, stop++);
+							if (worker.code.equalsIgnoreCase(code)) {
+								ic.code = code;
+								worker.found = true;
+							}
+							start = stop;
+						}
+						// Last alias
+						code = line.substring(start);
+						if (worker.code.equalsIgnoreCase(code)) {
+							ic.code = code;
+							worker.found = true;
+						}
+					}
+				} else {
+					ic.description = line;
+					loop = false;
+				}
+			}
+#if 0
+			// OK
 			ic.code = file.readStringUntil('\n');
 			ic.code.trim();
+			if (worker.code.equals(ic.code)) {
+				worker.found = true;
+			}
+			// Aliases
+			bool loop = true;
+			while (loop) {
+				String aliases = file.readStringUntil('\n');
+				if (aliases[0] == '#') {
+					if (worker.found == false) {
+						aliases.trim();
+						int start = 1, stop = 0;
+						while ((stop = aliases.indexOf(':', start)) > -1) {
+							if (worker.code.equals(aliases.substring(start, stop++))) {
+								worker.found = true;
+							}
+							start = stop;
+						}
+						// Last alias
+						if (worker.code.equals(aliases.substring(start))) {
+							worker.found = true;
+						}
+					}
+				} else {
+					ic.description = aliases;
+					loop = false;
+				}
+			}
+#endif
+			ic.count = file.readStringUntil('\n').toInt();
+#if 0
 			ic.description = file.readStringUntil('\n');
 			ic.count = file.readStringUntil('\n').toInt();
 			if (worker.code.equals(ic.code)) {
 				worker.found = true;
+				worker.index = 0;
+				worker.success = 0;
+				worker.failure = 0;
+				worker.package.count = ic.count;
+				ic_package_create();
+				ic_package_output();
+				ics.push(new IC(ic));
+				ui_draw_content();
+				while (file.peek() != '$') {
+					line = file.readStringUntil('\n');
+					line.trim();
+					lines.push(new String(line));
+				}
+				break;
+			} else {
+				ui_draw_indicator(COLOR_SKIP);
+			}
+#endif
+			if (worker.found) {
 				worker.index = 0;
 				worker.success = 0;
 				worker.failure = 0;
@@ -1364,6 +1493,8 @@ void ic_test_ram() {
 		}
 		worker.state = state_tested;
 	} else {
+		Debug(RAMFILE);
+		Debugln(F("not found"));
 		worker.state = state_media;
 	}
 	ui_draw_screen();
@@ -1420,7 +1551,7 @@ void setup() {
 	};
 #endif
 	// SD card
-	worker.state = fat.begin(10) ? state_startup : state_media;
+	worker.state = sd_begin() ? state_startup : state_media;
 	// UI
 	ui_draw_screen();
 }
@@ -1458,7 +1589,7 @@ void loop() {
 		case state_media:
 			if (buttons[button_escape].contains(worker.x, worker.y)) {
 				Debugln(F("media"));
-				if (fat.begin(10)) {
+				if (sd_begin()) {
 					state = state_menu;
 				} else {
 					Debugln(F("SD error"));

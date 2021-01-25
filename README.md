@@ -32,16 +32,24 @@ Pour développer l'application, l'IDE Eclipse, le plugin Sloeber et le core offi
 
 #### Librairies
 L'application utilise plusieurs librairies :
-- Adafruit BusIO 1.6.0
-- Adafruit GFX Library 1.10.3
+- Adafruit BusIO 1.7.1
+- Adafruit GFX Library 1.10.4
 - Adafruit TouchScreen 1.1.1
 - MCUFRIEND_kbv 2.9.9
-- SdFat 1.1.4
+- SdFat 1.1.4 ou 2.0.4
 #### Modifications
 Il est nécessaire de modifier le fichier **SdFatConfig.h** de la librairie SdFat pour permettre l'accès à la carte micro SD.
+
+En version 1.1.4, il faut définir `ENABLE_SOFTWARE_SPI_CLASS` à 1 :
 ```cpp
 #define ENABLE_SOFTWARE_SPI_CLASS 1
 ```
+En version 2.0.4, il faut définir `SPI_DRIVER_SELECT` à 2 :
+```cpp
+#define SPI_DRIVER_SELECT 2
+```
+> En cas de problème d'accès à la carte SD, il est recommandé de formater la carte SD avec l'outil [SD Card Formatter](https://www.sdcard.org/downloads/formatter/).
+
 Si votre écran utilise un composant HX8347, il est nécessaire de décommenter une ligne du fichier **MCUFRIEND_kbv.cpp** pour activer le support de ce composant.
 ```cpp
 #define SUPPORT_8347D
@@ -72,6 +80,7 @@ Ces portions de code sont signalées par un commentaire.
 ### Test de composants mémoire
 - Insérez le composant à tester dans le support ZIF.
 - Sélectionnez l'option **test RAM**.
-- Sur l'écran suivant, entrez le code du composant à tester. Par exemple **4164** pour un composant **TMS4164**.
+- Sur l'écran suivant, entrez le code du composant à tester. Par exemple **4164** ou **tms4164** pour un composant **TMS4164**.
 - Cliquez sur le bouton **ENTER**.
 - Le test du composant est effectué.
+> Il est possible d'entrer des codes alphanumériques de composant mémoire.

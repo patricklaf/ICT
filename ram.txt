@@ -1,4 +1,5 @@
 $4116
+$TMS4116
 16384 x 1 dynamic random-access memory
 16
 DRAM
@@ -14,6 +15,8 @@ C 5 7 6 12 11 10 13
 D 2
 Q 14
 $4164
+$KM4164
+$3764:4864
 65536 x 1 dynamic random-access memory
 16
 DRAM
@@ -40,6 +43,7 @@ C 5 7 6 12 11 10 13 9 1
 D 2
 Q 14
 $4416
+$MB81416
 16384 x 4 dynamic random-access memory
 18
 DRAM
@@ -53,7 +57,23 @@ R 14 13 12 11 8 7 6 10
 C 13 12 11 8 7 6
 D 2 3 15 17
 Q 2 3 15 17
+$4464
+$TMS4464
+65536 x 4 dynamic random-access memory
+18
+DRAM
+RAS 5
+CAS 16
+WE 4
+OE 1
+GND 18
+VCC 9
+R 14 13 12 11 8 7 6 10
+C 14 13 12 11 8 7 6 10 
+D 2 3 15 17
+Q 2 3 15 17
 $44256
+$MB81C4256
 262144 x 4 dynamic random-access memory
 20
 DRAM
@@ -68,6 +88,7 @@ C 6 7 8 9 11 12 13 14 15
 D 1 2 18 19
 Q 1 2 18 19
 $2114
+$UPD2114
 1024 x 4 static random-access memory
 18
 SRAM
@@ -79,6 +100,7 @@ A 5 6 7 4 3 2 1 17 16 15
 D 14 13 12 11
 Q 14 13 12 11
 $6116
+$HM6116
 2048 x 8 static random-access memory
 24
 SRAM
@@ -102,7 +124,7 @@ VCC 28
 A 1 2 3 4 5 6 7 8 9 10 21 23 24 25 26
 D 11 12 13 15 16 17 18 19
 Q 11 12 13 15 16 17 18 19
-$zx8132k
+$ZX8132K
 32Kb RAM extension for Sinclair ZX81
 32
 SRAM
