@@ -32,7 +32,7 @@ Pour développer l'application, l'IDE Eclipse, le plugin Sloeber et le core offi
 
 #### Librairies
 L'application utilise plusieurs librairies :
-- Adafruit BusIO 1.7.1
+- Adafruit BusIO 1.7.2
 - Adafruit GFX Library 1.10.4
 - Adafruit TouchScreen 1.1.1
 - MCUFRIEND_kbv 2.9.9
@@ -59,6 +59,10 @@ Ces portions de code sont signalées par un commentaire.
 ```cpp
 // TODO adapt code to your display
 ```
+Pour améliorer la précision du tactile, il est possible d'augmenter le nombre d'échantillons utilisés dans le fichier **TouchScreen.cpp**.
+```cpp
+#define NUMSAMPLES 4
+```
 ## Utilisation
 - L'orientation normale du testeur en utilisation est écran en bas, support ZIF en haut.
 - La broche 1 du composant à tester est positionnée en haut, à droite du support ZIF, vers le levier de verrouillage, comme indiqué par le pictogramme, à droite du support ZIF.
@@ -84,3 +88,22 @@ Ces portions de code sont signalées par un commentaire.
 - Cliquez sur le bouton **ENTER**.
 - Le test du composant est effectué.
 > Il est possible d'entrer des codes alphanumériques de composant mémoire.
+## Résolution de problème
+D'une manière générale, si l'extension ICT ne fonctionne pas correctement, il est nécessaire de faire fonctionner chaque élément par étape.
+Il faut commencer par utiliser l'écran sur l'Arduino Mega, sans l'extension ICT.
+### Fonctionnement de l'écran
+Si vous avez un écran blanc, il se peut que l'écran ne soit pas géré par défaut.
+Sur le moniteur série, l'identifiant du composant de l'écran est affiché :
+```batch
+TFT initialized 0x9341
+```
+Vous pouvez rechercher cet identifiant et vérifier s'il est possible d'activer son support dans la librairie **MCUFRIEND_kbv.cpp**.
+Une autre solution est d'utiliser le croquis **diagnose_TFT_support.ino** dans les exemples de la librairie **MCUFRIEND_kbv.cpp** et de suivre les instructions.
+### Fonctionnement du tactile
+Le croquis d'exemple **TouchScreen_Calibr_native.ino** de la librairie **MCUFRIEND_kbv.cpp** permet de paramétrer et de caliber le tactile.
+### Fonctionnement de la SD
+Les problèmes d'accès à la carte SD, en dehors d'une configuration correcte de la librairie **SdFat**, sont liés à un formatage incompatible de la carte.
+
+Une fois que chaque élément fonctionne, la dernière étape est d'intégrer l'extension. A ce stade, le seul point qui peut poser problème est une mauvaise insertion de l'extension.
+## Liens
+Pour obtenir de l'aide ou se procurer l'extension ICT, vous pouvez consulter le fil de discussion [[Arduino] ICT testeur de circuits intégrés](https://forum.system-cfg.com/viewtopic.php?f=18&t=11417), du forum du site  System.cfg.

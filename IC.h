@@ -1,10 +1,13 @@
 // IC
-// © 2020 Patrick Lafarguette
+// © 2020-2021 Patrick Lafarguette
 
 #ifndef IC_H_
 #define IC_H_
 
-#include "Arduino.h"
+#include <Arduino.h>
+
+#define ICT_VERSION "2.2.0"
+#define ICT_DATE "08/02/2021"
 
 #define ZIF_COUNT 40
 
@@ -19,6 +22,7 @@ enum {
 	TYPE_LOGIC,
 	TYPE_DRAM,
 	TYPE_SRAM,
+	TYPE_ROM,
 };
 
 typedef struct IC {

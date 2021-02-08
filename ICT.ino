@@ -1,6 +1,17 @@
 // ICT
 // © 2020-2021 Patrick Lafarguette
 //
+// 08/02/2021   2.2.0
+//
+// 01/02/2021	High and low buses.
+//              SRAM support. MCM6810.
+//
+// 30/01/2021	Read and write data bus functions.
+//				Write address functions for 16 or 32 bits.
+//
+// 27/01/2021	Increase bus width to 32 bits.
+//              SRAM support. KM684000.
+//
 // 25/01/2021	2.1.0
 //				DRAM support. 4464 family.
 //				RAM search case insensitive.
@@ -100,19 +111,14 @@ TouchScreen ts = TouchScreen(XP, YP, XM, YM, 345);
 
 // SD
 #if SD_FAT_VERSION < 20000
-
 // Modify SdFatConfig.h
 //
 //#define ENABLE_SOFTWARE_SPI_CLASS 1
-
 SdFatSoftSpi<12, 11, 13> fat;
-
 #else
-
 // Modify SdFatConfig.h
 //
 // #define SPI_DRIVER_SELECT 2
-
 const uint8_t SD_CS_PIN = 10;
 const uint8_t SOFT_MISO_PIN = 12;
 const uint8_t SOFT_MOSI_PIN = 11;
@@ -123,7 +129,6 @@ SoftSpiDriver<SOFT_MISO_PIN, SOFT_MOSI_PIN, SOFT_SCK_PIN> spi;
 #define SDCONFIG SdSpiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(0), &spi)
 
 SdFat fat;
-
 #endif
 
 Stack<IC*> ics;
@@ -132,6 +137,7 @@ Stack<String*> lines;
 #define TEST 0 // 1 to enable test cases, 0 to disable
 #define TIME 1 // 1 to enable time, 0 to disable
 #define DEBUG 1 // 1 to enable serial debug messages, 0 to disable
+#define MISMATCH 1 // 1 to enable serial mismatch messages, 0 to disable
 #define CAPTURE 0 // 1 to enable screen captures, 0 to disable
 
 #if DEBUG
@@ -271,7 +277,18 @@ Adafruit_GFX_Button buttons[button_count];
 // Bus //
 /////////
 
-const uint16_t DATA[] = {
+const uint8_t BYTES[] = {
+		(uint8_t)(1 << 0),
+		(uint8_t)(1 << 1),
+		(uint8_t)(1 << 2),
+		(uint8_t)(1 << 3),
+		(uint8_t)(1 << 4),
+		(uint8_t)(1 << 5),
+		(uint8_t)(1 << 6),
+		(uint8_t)(1 << 7)
+};
+
+const uint16_t WORDS[] = {
 		(uint16_t)(1 << 0),
 		(uint16_t)(1 << 1),
 		(uint16_t)(1 << 2),
@@ -290,44 +307,66 @@ const uint16_t DATA[] = {
 		(uint16_t)(1 << 15)
 };
 
-void ic_bus_write(Bus& bus) {
-	for (uint8_t index = 0; index < bus.count; ++index) {
-		ic_pin_write(worker.package.pins[bus.pins[index]], bus.value & DATA[index]);
+void ic_bus_write_address_word(Bus& bus) {
+	uint16_t lsb = bus.address;
+	for (uint8_t index = 0; index < bus.width; ++index) {
+		ic_pin_write(worker.package.pins[bus.pins[index]], lsb & WORDS[index]);
 	}
 }
 
-void ic_bus_read(Bus& bus) {
-	bus.value = 0;
-	for (uint8_t index = 0; index < bus.count; ++index) {
+void ic_bus_write_address_dword(Bus& bus) {
+	uint16_t lsb = bus.address;
+	uint16_t msb = bus.address >> 16;
+	uint8_t index = 0;
+	for (; index < 16; ++index) {
+		ic_pin_write(worker.package.pins[bus.pins[index]], lsb & WORDS[index]);
+	}
+	for (; index < bus.width; ++index) {
+		ic_pin_write(worker.package.pins[bus.pins[index]], msb & WORDS[index]);
+	}
+}
+
+void ic_bus_write_data(Bus& bus) {
+	for (uint8_t index = 0; index < bus.width; ++index) {
+		ic_pin_write(worker.package.pins[bus.pins[index]], bus.data & BYTES[index]);
+	}
+}
+
+void ic_bus_read_data(Bus& bus) {
+	bus.data = 0;
+	for (uint8_t index = 0; index < bus.width; ++index) {
 		if (ic_pin_read(worker.package.pins[bus.pins[index]])) {
-			bus.value |= DATA[index];
+			bus.data |= BYTES[index];
 		}
 	}
 }
 
 void ic_bus_output(Bus& bus) {
-	for (uint8_t index = 0; index < bus.count; ++index) {
+	for (uint8_t index = 0; index < bus.width; ++index) {
 		ic_pin_mode(worker.package.pins[bus.pins[index]], OUTPUT);
 	}
 }
 
 void ic_bus_input(Bus& bus) {
-	for (uint8_t index = 0; index < bus.count; ++index) {
+	for (uint8_t index = 0; index < bus.width; ++index) {
 		ic_pin_mode(worker.package.pins[bus.pins[index]], INPUT);
 	}
 }
 
 void ic_bus_data(Bus& bus, uint8_t bit, const bool alternate) {
 	uint8_t mask = alternate ? HIGH : LOW;
-	bus.value = 0;
-	for (uint8_t index = 0; index < bus.count; ++index) {
+	bus.data = 0;
+	for (uint8_t index = 0; index < bus.width; ++index) {
 		if (bit) {
-			bus.value |= DATA[index];
+			bus.data |= BYTES[index];
 		}
 		bit ^= mask;
 	}
-	Debug("data 0b");
-	Debugln(bus.value, BIN);
+	Debug(F("fill 0b"));
+	for (uint8_t index = bus.width - 1 ; index != 0xFF; --index) {
+		Debug(bus.data & BYTES[index] ? F("1") : F("0"));
+	}
+	Debugln();
 }
 
 /////////
@@ -351,7 +390,7 @@ void ic_ram() {
 	unsigned long start = millis();
 #endif
 	// Setup
-	for (uint8_t index = 0; index < ram.bus[BUS_Q].count; ++index) {
+	for (uint8_t index = 0; index < ram.bus[BUS_Q].width; ++index) {
 		ic_pin_mode(worker.package.pins[ram.bus[BUS_Q].pins[index]], INPUT);
 	}
 	// VCC, GND
@@ -362,6 +401,11 @@ void ic_ram() {
 	}
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_GND]], LOW);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_VCC]], HIGH);
+	// At package creation all pins are output low
+	// LOW bus is preset, so only set HIGH bus high
+	for (uint8_t index = 0; index < ram.bus[BUS_HIGH].width; ++index) {
+		ic_pin_write(worker.package.pins[ram.bus[BUS_HIGH].pins[index]], HIGH);
+	}
 	// Idle
 	ram.idle();
 	// Test
@@ -416,7 +460,7 @@ void ic_dram_idle() {
 	}
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], HIGH);
-	for (uint8_t index = 0; index < ram.bus[BUS_RAS].count; ++index) {
+	for (uint8_t index = 0; index < ram.bus[BUS_RAS].width; ++index) {
 		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], LOW);
 		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
 	}
@@ -424,14 +468,14 @@ void ic_dram_idle() {
 
 void ic_dram_write() {
 	// Row
-	ic_bus_write(ram.bus[BUS_RAS]);
+	ram.write_address(ram.bus[BUS_RAS]);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], LOW);
 	// WE
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], LOW);
 	// D
-	ic_bus_write(ram.bus[BUS_D]);
+	ic_bus_write_data(ram.bus[BUS_D]);
 	// Column
-	ic_bus_write(ram.bus[BUS_CAS]);
+	ram.write_address(ram.bus[BUS_CAS]);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], LOW);
 	// Idle
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
@@ -441,10 +485,10 @@ void ic_dram_write() {
 
 void ic_dram_read() {
 	// Row
-	ic_bus_write(ram.bus[BUS_RAS]);
+	ram.write_address(ram.bus[BUS_RAS]);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], LOW);
 	// Column
-	ic_bus_write(ram.bus[BUS_CAS]);
+	ram.write_address(ram.bus[BUS_CAS]);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], LOW);
 	// OE
 	bool oe = ic_ram_signal(SIGNAL_OE);
@@ -452,7 +496,7 @@ void ic_dram_read() {
 		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], LOW);
 	}
 	// Q
-	ic_bus_read(ram.bus[BUS_Q]);
+	ic_bus_read_data(ram.bus[BUS_Q]);
 	// Idle
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], HIGH);
@@ -463,32 +507,40 @@ void ic_dram_read() {
 }
 
 void ic_dram_fill(const bool alternate = false) {
-	uint16_t mask = alternate ? ram.bus[BUS_D].high : 0;
+	uint8_t mask = (alternate && (ram.bus[BUS_D].width > 1)) ? ram.bus[BUS_D].high : 0;
 	worker.color = COLOR_GOOD;
-	for (ram.bus[BUS_CAS].value = 0; ram.bus[BUS_CAS].value < ram.bus[BUS_CAS].high; ++ram.bus[BUS_CAS].value) {
+	for (ram.bus[BUS_CAS].address = 0; ram.bus[BUS_CAS].address < ram.bus[BUS_CAS].high; ++ram.bus[BUS_CAS].address) {
 		worker.success = 0;
 		worker.failure = 0;
 		ic_bus_output(ram.bus[BUS_D]);
 		// Inner loop is RAS to keep refreshing rows while writing a full column
-		for (ram.bus[BUS_RAS].value = 0; ram.bus[BUS_RAS].value < ram.bus[BUS_RAS].high; ++ram.bus[BUS_RAS].value) {
+		for (ram.bus[BUS_RAS].address = 0; ram.bus[BUS_RAS].address < ram.bus[BUS_RAS].high; ++ram.bus[BUS_RAS].address) {
 			ic_dram_write();
-			ram.bus[BUS_D].value ^= mask;
+			ram.bus[BUS_D].data ^= mask;
 		}
 		ic_bus_input(ram.bus[BUS_Q]);
 		// Inner loop is RAS to keep refreshing rows while reading back a full column
-		for (ram.bus[BUS_RAS].value = 0; ram.bus[BUS_RAS].value < ram.bus[BUS_RAS].high; ++ram.bus[BUS_RAS].value) {
+		for (ram.bus[BUS_RAS].address = 0; ram.bus[BUS_RAS].address < ram.bus[BUS_RAS].high; ++ram.bus[BUS_RAS].address) {
 			ic_dram_read();
-			if (ram.bus[BUS_D].value != ram.bus[BUS_Q].value) {
-				Debug("D ");
-				Debug(ram.bus[BUS_D].value, BIN);
+			if (ram.bus[BUS_D].data != ram.bus[BUS_Q].data) {
+#if MISMATCH
+				Debug("RAS ");
+				Debug(ram.bus[BUS_RAS].address, BIN);
+				Debug(", CAS ");
+				Debug(ram.bus[BUS_CAS].address, BIN);
+				Debug(", D ");
+				Debug(ram.bus[BUS_D].data, BIN);
 				Debug(", Q ");
-				Debugln(ram.bus[BUS_Q].value, BIN);
+				Debug(ram.bus[BUS_Q].data, BIN);
+				Debug(", delta ");
+				Debugln(ram.bus[BUS_D].data ^ ram.bus[BUS_Q].data, BIN);
+#endif
 				worker.failure++;
 				worker.color = COLOR_BAD;
 			} else {
 				worker.success++;
 			}
-			ram.bus[BUS_D].value ^= mask;
+			ram.bus[BUS_D].data ^= mask;
 		}
 		ui_draw_indicator((worker.success ? (worker.failure ? COLOR_MIXED : COLOR_GOOD) : COLOR_BAD));
 	}
@@ -510,12 +562,12 @@ void ic_sram_idle() {
 
 void ic_sram_write() {
 	// Address
-	ic_bus_write(ram.bus[BUS_ADDRESS]);
+	ram.write_address(ram.bus[BUS_ADDRESS]);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], LOW);
 	// WE
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], LOW);
 	// D
-	ic_bus_write(ram.bus[BUS_D]);
+	ic_bus_write_data(ram.bus[BUS_D]);
 	// Idle
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
@@ -523,7 +575,7 @@ void ic_sram_write() {
 
 void ic_sram_read() {
 	// Address
-	ic_bus_write(ram.bus[BUS_ADDRESS]);
+	ram.write_address(ram.bus[BUS_ADDRESS]);
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], LOW);
 	// OE
 	bool oe = ic_ram_signal(SIGNAL_OE);
@@ -531,7 +583,7 @@ void ic_sram_read() {
 		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], LOW);
 	}
 	// Q
-	ic_bus_read(ram.bus[BUS_Q]);
+	ic_bus_read_data(ram.bus[BUS_Q]);
 	// Idle
 	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
 	// OE
@@ -541,35 +593,37 @@ void ic_sram_read() {
 }
 
 void ic_sram_fill(const bool alternate = false) {
-	uint16_t mask = alternate ? ram.bus[BUS_D].high : 0;
+	uint8_t mask = (alternate && (ram.bus[BUS_D].width > 1)) ? ram.bus[BUS_D].high : 0;
 	worker.color = COLOR_GOOD;
 	// Write full address space
 	ic_bus_output(ram.bus[BUS_D]);
-	for (ram.bus[BUS_ADDRESS].value = 0; ram.bus[BUS_ADDRESS].value < ram.bus[BUS_ADDRESS].high; ++ram.bus[BUS_ADDRESS].value) {
+	for (ram.bus[BUS_ADDRESS].address = 0; ram.bus[BUS_ADDRESS].address < ram.bus[BUS_ADDRESS].high; ++ram.bus[BUS_ADDRESS].address) {
 		ic_sram_write();
-		ram.bus[BUS_D].value ^= mask;
+		ram.bus[BUS_D].data ^= mask;
 	}
 	// Read full address space
 	ic_bus_input(ram.bus[BUS_Q]);
-	for (ram.bus[BUS_ADDRESS].value = 0; ram.bus[BUS_ADDRESS].value < ram.bus[BUS_ADDRESS].high; ++ram.bus[BUS_ADDRESS].value) {
+	for (ram.bus[BUS_ADDRESS].address = 0; ram.bus[BUS_ADDRESS].address < ram.bus[BUS_ADDRESS].high; ++ram.bus[BUS_ADDRESS].address) {
 		worker.success = 0;
 		worker.failure = 0;
 		ic_sram_read();
-		if (ram.bus[BUS_D].value != ram.bus[BUS_Q].value) {
+		if (ram.bus[BUS_D].data != ram.bus[BUS_Q].data) {
+#if MISMATCH
 			Debug("A ");
-			Debug(ram.bus[BUS_ADDRESS].value, BIN);
+			Debug(ram.bus[BUS_ADDRESS].address, BIN);
 			Debug(", D ");
-			Debug(ram.bus[BUS_D].value, BIN);
+			Debug(ram.bus[BUS_D].data, BIN);
 			Debug(", Q ");
-			Debug(ram.bus[BUS_Q].value, BIN);
+			Debug(ram.bus[BUS_Q].data, BIN);
 			Debug(", delta ");
-			Debugln(ram.bus[BUS_D].value ^ ram.bus[BUS_Q].value, BIN);
+			Debugln(ram.bus[BUS_D].data ^ ram.bus[BUS_Q].data, BIN);
+#endif
 			worker.failure++;
 			worker.color = COLOR_BAD;
 		} else {
 			worker.success++;
 		}
-		ram.bus[BUS_D].value ^= mask;
+		ram.bus[BUS_D].data ^= mask;
 		ui_draw_indicator((worker.success ? (worker.failure ? COLOR_MIXED : COLOR_GOOD) : COLOR_BAD));
 	}
 	ui_draw_ram();
@@ -643,8 +697,6 @@ bool sd_begin() {
 }
 
 #if CAPTURE
-
-
 void sd_screen_capture() {
 	static unsigned int index = 0;
 	String filename("image.");
@@ -668,7 +720,6 @@ void sd_screen_capture() {
 	free(pixels);
 	Serial.println(" done");
 }
-
 #endif
 
 ////////////////////
@@ -797,8 +848,8 @@ void ui_draw_screen() {
 		ui_draw_header(true);
 		// Version
 		tft.setTextSize(2);
-		ui_draw_center(F("version 2.1.0"), tft.getCursorY());
-		ui_draw_center(F("25/01/2021"), tft.getCursorY());
+		ui_draw_center(F(ICT_VERSION), tft.getCursorY());
+		ui_draw_center(F(ICT_DATE), tft.getCursorY());
 		// Author
 		tft.setTextColor(TFT_WHITE);
 		ui_draw_center(F("Patrick Lafarguette"), AREA_CONTENT + 32);
@@ -1032,9 +1083,9 @@ void ic_package_idle() {
 #if TEST
 void ic_package_dump() {
 	Serial.print("DIP");
-	Serial.print(worker.package.count);
+	Serial.print(worker.package.width);
 	Serial.print(" ");
-	for (uint8_t index = 0; index < worker.package.count; ++index) {
+	for (uint8_t index = 0; index < worker.package.width; ++index) {
 		if (index) {
 			Serial.print(", ");
 		}
@@ -1045,20 +1096,20 @@ void ic_package_dump() {
 }
 
 void ic_package_test() {
-	worker.package.count = 20;
+	worker.package.width = 20;
 	ic_package_create();
 	// 30, 32, 34, 36, 38, 40, 42, 44, 50, 48, 49, 47, 45, 43, 41, 39, 37, 35, 33, 31
 	ic_package_dump();
-	worker.package.count = 18;
+	worker.package.width = 18;
 	ic_package_create();
 	// 30, 32, 34, 36, 38, 40, 42, 44, 50, 47, 45, 43, 41, 39, 37, 35, 33, 31
 	ic_package_dump();
-	worker.package.count = 16;
+	worker.package.width = 16;
 	ic_package_create();
 	// 30, 32, 34, 36, 38, 40, 42, 44, 45, 43, 41, 39, 37, 35, 33, 31
 	// 30, 32, 34, 36, 38, 40, 42, 44, 45, 43, 41, 39, 37, 35, 33, 31
 	ic_package_dump();
-	worker.package.count = 14;
+	worker.package.width = 14;
 	ic_package_create();
 	// 30, 32, 34, 36, 38, 40, 42, 43, 41, 39, 37, 35, 33, 31
 	// 30, 32, 34, 36, 38, 40, 42, 43, 41, 39, 37, 35, 33, 31
@@ -1265,18 +1316,34 @@ void ic_test_logic() {
 }
 
 bool ic_parse_bus(String& tag, String& data) {
-	const char* LABELS[] = { "A", "R", "C", "D", "Q" };
-	const uint8_t BUS[] = { BUS_ADDRESS, BUS_RAS, BUS_CAS, BUS_D, BUS_Q };
+	const char* LABELS[] = { "A", "R", "C", "D", "Q", "L", "H" };
+	const uint8_t BUS[] = { BUS_ADDRESS, BUS_RAS, BUS_CAS, BUS_D, BUS_Q, BUS_LOW, BUS_HIGH };
 	for (uint8_t index = 0; index < sizeof(BUS) / sizeof(uint8_t); ++index) {
 		if (tag.equals(LABELS[index])) {
 			int start = 0, stop = 0;
-			ram.bus[BUS[index]].count = 0;
+			uint8_t pin = 0;
 			while ((stop = data.indexOf(' ', start)) > -1) {
-				ram.bus[BUS[index]].pins[ram.bus[BUS[index]].count++] = data.substring(start, stop++).toInt() - 1;
+				pin = data.substring(start, stop++).toInt();
+#if 1
+				Debug(", ");
+				Debug(pin);
+#endif
+				ram.bus[BUS[index]].pins[ram.bus[BUS[index]].width++] = pin - 1;
 				start = stop;
 			}
-			ram.bus[BUS[index]].pins[ram.bus[BUS[index]].count++] = data.substring(start).toInt() - 1;
-			ram.bus[BUS[index]].high = 1 << ram.bus[BUS[index]].count;
+			pin = data.substring(start).toInt();
+#if 1
+			Debug(", ");
+			Debug(pin);
+#endif
+			ram.bus[BUS[index]].pins[ram.bus[BUS[index]].width++] = pin - 1;
+			ram.bus[BUS[index]].high = (uint32_t)1 << ram.bus[BUS[index]].width;
+#if 1
+			Debug(", width ");
+			Debug(ram.bus[BUS[index]].width);
+			Debug(", high 0x");
+			Debug(ram.bus[BUS[index]].high, HEX);
+#endif
 			return true;
 		}
 	}
@@ -1288,7 +1355,12 @@ bool ic_parse_signal(String& tag, String& data) {
 	const uint8_t SIGNALS[] = { SIGNAL_CS, SIGNAL_RAS, SIGNAL_CAS, SIGNAL_WE, SIGNAL_OE, SIGNAL_GND, SIGNAL_VCC, SIGNAL_VBB, SIGNAL_VDD };
 	for (uint8_t index = 0; index < sizeof(SIGNALS) / sizeof(uint8_t); ++index) {
 		if (tag.equals(LABELS[index])) {
-			ram.signals[SIGNALS[index]] = data.toInt() - 1;
+			uint8_t pin = data.toInt();
+#if 1
+			Debug(F(" "));
+			Debug(pin);
+#endif
+			ram.signals[SIGNALS[index]] = pin - 1;
 			return true;
 		}
 	}
@@ -1298,10 +1370,12 @@ bool ic_parse_signal(String& tag, String& data) {
 void ic_parse_ram(IC& ic) {
 	ram.count = ic.count;
 	// Reset
-	ram.bus[BUS_RAS].pins = RAS;
-	ram.bus[BUS_CAS].pins = CAS;
-	ram.bus[BUS_D].pins = D;
-	ram.bus[BUS_Q].pins = Q;
+	ram.bus[BUS_RAS].width = 0;
+	ram.bus[BUS_CAS].width = 0;
+	ram.bus[BUS_D].width = 0;
+	ram.bus[BUS_Q].width = 0;
+	ram.bus[BUS_LOW].width = 0;
+	ram.bus[BUS_HIGH].width = 0;
 	for (uint8_t index = 0; index < SIGNAL_COUNT; ++index) {
 		ram.signals[index] = -1;
 	}
@@ -1330,29 +1404,29 @@ void ic_parse_ram(IC& ic) {
 	// Decrease data bus
 	ram.bus[BUS_D].high -= 1;
 	ram.bus[BUS_Q].high -= 1;
-	Debug("signals ");
-	for (uint8_t index = 0; index < SIGNAL_COUNT; ++index) {
-		if (index) {
-			Debug(", ");
-		}
-		Debug(ram.signals[index]);
-	}
-	for (uint8_t index = 0; index < BUS_COUNT; ++index) {
-		Debugln();
-		Debug(RAM_BUS[index]);
-		Debug(" ");
-		Bus bus = ram.bus[index];
-		Debug(bus.count);
-		Debug(" 0b");
-		Debugln(bus.high, BIN);
-		for (uint8_t index = 0; index < bus.count; ++index) {
-			if (index) {
-				Debug(", ");
-			}
-			Debug(bus.pins[index]);
-		}
-		Debugln();
-	}
+//	Debug("signals ");
+//	for (uint8_t index = 0; index < SIGNAL_COUNT; ++index) {
+//		if (index) {
+//			Debug(", ");
+//		}
+//		Debug(ram.signals[index]);
+//	}
+//	for (uint8_t index = 0; index < BUS_COUNT; ++index) {
+//		Debugln();
+//		Debug(RAM_BUS[index]);
+//		Debug(" ");
+//		Bus bus = ram.bus[index];
+//		Debug(bus.width);
+//		Debug(" 0b");
+//		Debugln(bus.high, BIN);
+//		for (uint8_t index = 0; index < bus.width; ++index) {
+//			if (index) {
+//				Debug(", ");
+//			}
+//			Debug(bus.pins[index]);
+//		}
+//		Debugln();
+//	}
 }
 
 void ic_test_ram() {
@@ -1401,62 +1475,7 @@ void ic_test_ram() {
 					loop = false;
 				}
 			}
-#if 0
-			// OK
-			ic.code = file.readStringUntil('\n');
-			ic.code.trim();
-			if (worker.code.equals(ic.code)) {
-				worker.found = true;
-			}
-			// Aliases
-			bool loop = true;
-			while (loop) {
-				String aliases = file.readStringUntil('\n');
-				if (aliases[0] == '#') {
-					if (worker.found == false) {
-						aliases.trim();
-						int start = 1, stop = 0;
-						while ((stop = aliases.indexOf(':', start)) > -1) {
-							if (worker.code.equals(aliases.substring(start, stop++))) {
-								worker.found = true;
-							}
-							start = stop;
-						}
-						// Last alias
-						if (worker.code.equals(aliases.substring(start))) {
-							worker.found = true;
-						}
-					}
-				} else {
-					ic.description = aliases;
-					loop = false;
-				}
-			}
-#endif
 			ic.count = file.readStringUntil('\n').toInt();
-#if 0
-			ic.description = file.readStringUntil('\n');
-			ic.count = file.readStringUntil('\n').toInt();
-			if (worker.code.equals(ic.code)) {
-				worker.found = true;
-				worker.index = 0;
-				worker.success = 0;
-				worker.failure = 0;
-				worker.package.count = ic.count;
-				ic_package_create();
-				ic_package_output();
-				ics.push(new IC(ic));
-				ui_draw_content();
-				while (file.peek() != '$') {
-					line = file.readStringUntil('\n');
-					line.trim();
-					lines.push(new String(line));
-				}
-				break;
-			} else {
-				ui_draw_indicator(COLOR_SKIP);
-			}
-#endif
 			if (worker.found) {
 				worker.index = 0;
 				worker.success = 0;
@@ -1483,10 +1502,20 @@ void ic_test_ram() {
 			case TYPE_DRAM:
 				ram.idle = &ic_dram_idle;
 				ram.fill = &ic_dram_fill;
+				if (ram.bus[BUS_ADDRESS].width > 16) {
+					ram.write_address = &ic_bus_write_address_dword;
+				} else {
+					ram.write_address = &ic_bus_write_address_word;
+				}
 				break;
 			case TYPE_SRAM:
 				ram.idle = &ic_sram_idle;
 				ram.fill = &ic_sram_fill;
+				if ((ram.bus[BUS_RAS].width > 16) || (ram.bus[BUS_CAS].width > 16)) {
+					ram.write_address = &ic_bus_write_address_dword;
+				} else {
+					ram.write_address = &ic_bus_write_address_word;
+				}
 				break;
 			}
 			ic_ram();
