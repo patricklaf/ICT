@@ -1,6 +1,22 @@
 // ICT
 // © 2020-2021 Patrick Lafarguette
 //
+// 03/03/2021   2.3.0
+//
+// 02/03/2021   Fix a bug in keyboard.
+//              Add checkbox UI.
+//              ROM test option.
+//
+// 28/02/2021   Fix a bug in address write.
+//
+// 25/02/2021   ROM support. 27128, 27256 families.
+//              ROM support. Dump to file.
+//              Add ini file for settings.
+//
+// 22/02/2021   Support more than 1 clock signal for logic test.
+//
+// 19/02/2021   ROM support. 2764 family.
+//
 // 08/02/2021   2.2.0
 //
 // 01/02/2021	High and low buses.
@@ -87,8 +103,9 @@
 #include <TouchScreen.h>
 
 #include "IC.h"
-#include "RAM.h"
+#include "Checkbox.h"
 #include "Keyboard.h"
+#include "Memory.h"
 #include "Stack.h"
 
 // Set one of the language to 1.
@@ -138,7 +155,7 @@ Stack<String*> lines;
 #define TIME 1 // 1 to enable time, 0 to disable
 #define DEBUG 1 // 1 to enable serial debug messages, 0 to disable
 #define MISMATCH 1 // 1 to enable serial mismatch messages, 0 to disable
-#define CAPTURE 0 // 1 to enable screen captures, 0 to disable
+#define CAPTURE 1 // 1 to enable screen captures, 0 to disable
 
 #if DEBUG
 #define Debug(...) Serial.print(__VA_ARGS__)
@@ -155,8 +172,10 @@ typedef enum states {
 	state_identify_logic,
 	state_test_logic,
 	state_test_ram,
+	state_test_rom,
 	state_package_dip, // Only logic
 	state_keyboard,
+	state_option,
 	state_identified,
 	state_tested,
 } states_t;
@@ -166,15 +185,19 @@ typedef enum actions {
 	action_identify_logic,
 	action_test_logic,
 	action_test_ram,
+	action_test_rom,
 } actions_t;
 
 typedef enum buttons {
 	button_identify_logic,
 	button_test_logic,
 	button_test_ram,
+	button_test_rom,
 	// Identify logic
 	button_dip14 = 0,
 	button_dip16,
+	// Test
+	button_continue = 0,
 	// Test
 	button_redo = 0,
 	// Keyboard
@@ -188,6 +211,20 @@ typedef enum buttons {
 	button_escape,
 	button_count,
 } buttons_t;
+
+typedef enum checkboxes {
+	checkbox_option_blank,
+	checkbox_option_serial,
+	checkbox_option_sdcard,
+	checkbox_count,
+} checkboxes_t;
+
+typedef enum flags {
+	flag_rom_blank,
+	flag_rom_serial,
+	flag_rom_sdcard,
+	flag_count,
+} flags_t;
 
 typedef struct Worker {
 	uint8_t state;
@@ -232,6 +269,15 @@ Worker worker;
 #define BUTTON_SPACING_Y 12
 #define BUTTON_TEXTSIZE 2
 
+// UI checkboxes
+#define CHECKBOX_X 4
+#define CHECKBOX_Y ( AREA_CONTENT - 14)
+#define CHECKBOX_W 32
+#define CHECKBOX_H 32
+#define CHECKBOX_SPACING_X 4
+#define CHECKBOX_SPACING_Y 4
+#define CHECKBOX_TEXTSIZE 2
+
 // UI input
 #define INPUT_HEIGHT 54
 #define INPUT_X 8
@@ -267,11 +313,21 @@ Worker worker;
 
 Keyboard keyboard(&tft, INPUT_HEIGHT + 1);
 
+Checkbox checkboxes[checkbox_count];
+
 Adafruit_GFX_Button buttons[button_count];
 
 // Filenames
-#define LOGICFILE "logic.txt"
-#define RAMFILE "ram.txt"
+#define INIFILE "ict.ini"
+#define TMPFILE "ict.tmp"
+#define LOGICFILE "logic.ict"
+#define MEMORYFILE "memory.ict"
+
+void hexa(uint32_t value, uint8_t count) {
+	for (uint8_t index = count; index > 0;) {
+		Serial.print(value >> (--index * 4) & 0x0F, HEX);
+	}
+}
 
 /////////
 // Bus //
@@ -310,7 +366,7 @@ const uint16_t WORDS[] = {
 void ic_bus_write_address_word(Bus& bus) {
 	uint16_t lsb = bus.address;
 	for (uint8_t index = 0; index < bus.width; ++index) {
-		ic_pin_write(worker.package.pins[bus.pins[index]], lsb & WORDS[index]);
+		ic_pin_write(worker.package.pins[bus.pins[index]], lsb & WORDS[index] ? HIGH : LOW);
 	}
 }
 
@@ -319,10 +375,10 @@ void ic_bus_write_address_dword(Bus& bus) {
 	uint16_t msb = bus.address >> 16;
 	uint8_t index = 0;
 	for (; index < 16; ++index) {
-		ic_pin_write(worker.package.pins[bus.pins[index]], lsb & WORDS[index]);
+		ic_pin_write(worker.package.pins[bus.pins[index]], lsb & WORDS[index] ? HIGH : LOW);
 	}
 	for (; index < bus.width; ++index) {
-		ic_pin_write(worker.package.pins[bus.pins[index]], msb & WORDS[index]);
+		ic_pin_write(worker.package.pins[bus.pins[index]], msb & WORDS[index] ? HIGH : LOW);
 	}
 }
 
@@ -369,15 +425,19 @@ void ic_bus_data(Bus& bus, uint8_t bit, const bool alternate) {
 	Debugln();
 }
 
+////////////
+// Memory //
+////////////
+
+bool ic_memory_signal(uint8_t signal) {
+	return memory.signals[signal] > -1;
+}
+
 /////////
 // RAM //
 /////////
 
-bool ic_ram_signal(uint8_t signal) {
-	return ram.signals[signal] > -1;
-}
-
-void ic_ram() {
+void ic_ram_loop() {
 	// UI
 	worker.ram = 0;
 	worker.color = TFT_WHITE;
@@ -390,36 +450,26 @@ void ic_ram() {
 	unsigned long start = millis();
 #endif
 	// Setup
-	for (uint8_t index = 0; index < ram.bus[BUS_Q].width; ++index) {
-		ic_pin_mode(worker.package.pins[ram.bus[BUS_Q].pins[index]], INPUT);
+	for (uint8_t index = 0; index < memory.bus[BUS_Q].width; ++index) {
+		ic_pin_mode(worker.package.pins[memory.bus[BUS_Q].pins[index]], INPUT);
 	}
 	// VCC, GND
-	if ((ram.signals[SIGNAL_VBB] == 0) && (ram.signals[SIGNAL_VDD] == 7)) {
+	if ((memory.signals[SIGNAL_VBB] == 0) && (memory.signals[SIGNAL_VDD] == 7)) {
 		// Power rails to -5 and +12 V
 		Debugln("Enable -5 and +12 V");
 		digitalWrite(A7, HIGH);
 	}
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_GND]], LOW);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_VCC]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_GND]], LOW);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_VCC]], HIGH);
 	// At package creation all pins are output low
 	// LOW bus is preset, so only set HIGH bus high
-	for (uint8_t index = 0; index < ram.bus[BUS_HIGH].width; ++index) {
-		ic_pin_write(worker.package.pins[ram.bus[BUS_HIGH].pins[index]], HIGH);
+	for (uint8_t index = 0; index < memory.bus[BUS_HIGH].width; ++index) {
+		ic_pin_write(worker.package.pins[memory.bus[BUS_HIGH].pins[index]], HIGH);
 	}
 	// Idle
-	ram.idle();
+	memory.idle();
 	// Test
 	worker.indicator = 0;
-#if 0
-	ic_bus_data(ram.bus[BUS_D], LOW, true);
-	ram.fill(true);
-	ic_bus_data(ram.bus[BUS_D], HIGH, true);
-	ram.fill(true);
-	ic_bus_data(ram.bus[BUS_D], LOW, false);
-	ram.fill(false);
-	ic_bus_data(ram.bus[BUS_D], HIGH, false);
-	ram.fill(false);
-#else
 	for (uint8_t loop = 0; loop < 4; ++loop) {
 		// 0 00 0 false true
 		// 1 01 0 false true
@@ -430,17 +480,16 @@ void ic_ram() {
 		// 1 01 1 HIGH
 		// 2 10 0 LOW
 		// 3 11 1 HIGH
-		ic_bus_data(ram.bus[BUS_D], loop & 0x01, alternate);
-		ram.fill(alternate);
+		ic_bus_data(memory.bus[BUS_D], loop & 0x01, alternate);
+		memory.fill(alternate);
 	}
-#endif
 	// Shutdown
-	if ((ram.signals[SIGNAL_VBB] == 0) && (ram.signals[SIGNAL_VDD] == 7)) {
+	if ((memory.signals[SIGNAL_VBB] == 0) && (memory.signals[SIGNAL_VDD] == 7)) {
 		Debugln("Disable -5 and +12 V");
 		// Power rails to TTL
 		digitalWrite(A7, LOW);
 	}
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_VCC]], LOW);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_VCC]], LOW);
 #if TIME
 	unsigned long stop = millis();
 	Serial.print(F(TIME_ELAPSED));
@@ -454,93 +503,93 @@ void ic_ram() {
 
 void ic_dram_idle() {
 	// Idle
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
-	if (ic_ram_signal(SIGNAL_OE)) {
-		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_WE]], HIGH);
+	if (ic_memory_signal(SIGNAL_OE)) {
+		ic_pin_write(worker.package.pins[memory.signals[SIGNAL_OE]], HIGH);
 	}
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], HIGH);
-	for (uint8_t index = 0; index < ram.bus[BUS_RAS].width; ++index) {
-		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], LOW);
-		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_RAS]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CAS]], HIGH);
+	for (uint8_t index = 0; index < memory.bus[BUS_RAS].width; ++index) {
+		ic_pin_write(worker.package.pins[memory.signals[SIGNAL_RAS]], LOW);
+		ic_pin_write(worker.package.pins[memory.signals[SIGNAL_RAS]], HIGH);
 	}
 }
 
 void ic_dram_write() {
 	// Row
-	ram.write_address(ram.bus[BUS_RAS]);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], LOW);
+	memory.write_address(memory.bus[BUS_RAS]);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_RAS]], LOW);
 	// WE
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], LOW);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_WE]], LOW);
 	// D
-	ic_bus_write_data(ram.bus[BUS_D]);
+	ic_bus_write_data(memory.bus[BUS_D]);
 	// Column
-	ram.write_address(ram.bus[BUS_CAS]);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], LOW);
+	memory.write_address(memory.bus[BUS_CAS]);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CAS]], LOW);
 	// Idle
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_WE]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_RAS]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CAS]], HIGH);
 }
 
 void ic_dram_read() {
 	// Row
-	ram.write_address(ram.bus[BUS_RAS]);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], LOW);
+	memory.write_address(memory.bus[BUS_RAS]);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_RAS]], LOW);
 	// Column
-	ram.write_address(ram.bus[BUS_CAS]);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], LOW);
+	memory.write_address(memory.bus[BUS_CAS]);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CAS]], LOW);
 	// OE
-	bool oe = ic_ram_signal(SIGNAL_OE);
+	bool oe = ic_memory_signal(SIGNAL_OE);
 	if (oe) {
-		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], LOW);
+		ic_pin_write(worker.package.pins[memory.signals[SIGNAL_OE]], LOW);
 	}
 	// Q
-	ic_bus_read_data(ram.bus[BUS_Q]);
+	ic_bus_read_data(memory.bus[BUS_Q]);
 	// Idle
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_RAS]], HIGH);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CAS]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_RAS]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CAS]], HIGH);
 	// OE
 	if (oe) {
-		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], HIGH);
+		ic_pin_write(worker.package.pins[memory.signals[SIGNAL_OE]], HIGH);
 	}
 }
 
 void ic_dram_fill(const bool alternate = false) {
-	uint8_t mask = (alternate && (ram.bus[BUS_D].width > 1)) ? ram.bus[BUS_D].high : 0;
+	uint8_t mask = (alternate && (memory.bus[BUS_D].width > 1)) ? memory.bus[BUS_D].high : 0;
 	worker.color = COLOR_GOOD;
-	for (ram.bus[BUS_CAS].address = 0; ram.bus[BUS_CAS].address < ram.bus[BUS_CAS].high; ++ram.bus[BUS_CAS].address) {
+	for (memory.bus[BUS_CAS].address = 0; memory.bus[BUS_CAS].address < memory.bus[BUS_CAS].high; ++memory.bus[BUS_CAS].address) {
 		worker.success = 0;
 		worker.failure = 0;
-		ic_bus_output(ram.bus[BUS_D]);
+		ic_bus_output(memory.bus[BUS_D]);
 		// Inner loop is RAS to keep refreshing rows while writing a full column
-		for (ram.bus[BUS_RAS].address = 0; ram.bus[BUS_RAS].address < ram.bus[BUS_RAS].high; ++ram.bus[BUS_RAS].address) {
+		for (memory.bus[BUS_RAS].address = 0; memory.bus[BUS_RAS].address < memory.bus[BUS_RAS].high; ++memory.bus[BUS_RAS].address) {
 			ic_dram_write();
-			ram.bus[BUS_D].data ^= mask;
+			memory.bus[BUS_D].data ^= mask;
 		}
-		ic_bus_input(ram.bus[BUS_Q]);
+		ic_bus_input(memory.bus[BUS_Q]);
 		// Inner loop is RAS to keep refreshing rows while reading back a full column
-		for (ram.bus[BUS_RAS].address = 0; ram.bus[BUS_RAS].address < ram.bus[BUS_RAS].high; ++ram.bus[BUS_RAS].address) {
+		for (memory.bus[BUS_RAS].address = 0; memory.bus[BUS_RAS].address < memory.bus[BUS_RAS].high; ++memory.bus[BUS_RAS].address) {
 			ic_dram_read();
-			if (ram.bus[BUS_D].data != ram.bus[BUS_Q].data) {
+			if (memory.bus[BUS_D].data != memory.bus[BUS_Q].data) {
 #if MISMATCH
 				Debug("RAS ");
-				Debug(ram.bus[BUS_RAS].address, BIN);
+				Debug(memory.bus[BUS_RAS].address, BIN);
 				Debug(", CAS ");
-				Debug(ram.bus[BUS_CAS].address, BIN);
+				Debug(memory.bus[BUS_CAS].address, BIN);
 				Debug(", D ");
-				Debug(ram.bus[BUS_D].data, BIN);
+				Debug(memory.bus[BUS_D].data, BIN);
 				Debug(", Q ");
-				Debug(ram.bus[BUS_Q].data, BIN);
+				Debug(memory.bus[BUS_Q].data, BIN);
 				Debug(", delta ");
-				Debugln(ram.bus[BUS_D].data ^ ram.bus[BUS_Q].data, BIN);
+				Debugln(memory.bus[BUS_D].data ^ memory.bus[BUS_Q].data, BIN);
 #endif
 				worker.failure++;
 				worker.color = COLOR_BAD;
 			} else {
 				worker.success++;
 			}
-			ram.bus[BUS_D].data ^= mask;
+			memory.bus[BUS_D].data ^= mask;
 		}
 		ui_draw_indicator((worker.success ? (worker.failure ? COLOR_MIXED : COLOR_GOOD) : COLOR_BAD));
 	}
@@ -553,80 +602,224 @@ void ic_dram_fill(const bool alternate = false) {
 
 void ic_sram_idle() {
 	// Idle
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
-	if (ic_ram_signal(SIGNAL_OE)) {
-		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_WE]], HIGH);
+	if (ic_memory_signal(SIGNAL_OE)) {
+		ic_pin_write(worker.package.pins[memory.signals[SIGNAL_OE]], HIGH);
 	}
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CS]], HIGH);
 }
 
 void ic_sram_write() {
 	// Address
-	ram.write_address(ram.bus[BUS_ADDRESS]);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], LOW);
+	memory.write_address(memory.bus[BUS_ADDRESS]);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CS]], LOW);
 	// WE
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], LOW);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_WE]], LOW);
 	// D
-	ic_bus_write_data(ram.bus[BUS_D]);
+	ic_bus_write_data(memory.bus[BUS_D]);
 	// Idle
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_WE]], HIGH);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_WE]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CS]], HIGH);
 }
 
 void ic_sram_read() {
 	// Address
-	ram.write_address(ram.bus[BUS_ADDRESS]);
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], LOW);
+	memory.write_address(memory.bus[BUS_ADDRESS]);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CS]], LOW);
 	// OE
-	bool oe = ic_ram_signal(SIGNAL_OE);
+	bool oe = ic_memory_signal(SIGNAL_OE);
 	if (oe) {
-		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], LOW);
+		ic_pin_write(worker.package.pins[memory.signals[SIGNAL_OE]], LOW);
 	}
 	// Q
-	ic_bus_read_data(ram.bus[BUS_Q]);
+	ic_bus_read_data(memory.bus[BUS_Q]);
 	// Idle
-	ic_pin_write(worker.package.pins[ram.signals[SIGNAL_CS]], HIGH);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CS]], HIGH);
 	// OE
 	if (oe) {
-		ic_pin_write(worker.package.pins[ram.signals[SIGNAL_OE]], HIGH);
+		ic_pin_write(worker.package.pins[memory.signals[SIGNAL_OE]], HIGH);
 	}
 }
 
 void ic_sram_fill(const bool alternate = false) {
-	uint8_t mask = (alternate && (ram.bus[BUS_D].width > 1)) ? ram.bus[BUS_D].high : 0;
+	uint8_t mask = (alternate && (memory.bus[BUS_D].width > 1)) ? memory.bus[BUS_D].high : 0;
 	worker.color = COLOR_GOOD;
 	// Write full address space
-	ic_bus_output(ram.bus[BUS_D]);
-	for (ram.bus[BUS_ADDRESS].address = 0; ram.bus[BUS_ADDRESS].address < ram.bus[BUS_ADDRESS].high; ++ram.bus[BUS_ADDRESS].address) {
+	ic_bus_output(memory.bus[BUS_D]);
+	for (memory.bus[BUS_ADDRESS].address = 0; memory.bus[BUS_ADDRESS].address < memory.bus[BUS_ADDRESS].high; ++memory.bus[BUS_ADDRESS].address) {
 		ic_sram_write();
-		ram.bus[BUS_D].data ^= mask;
+		memory.bus[BUS_D].data ^= mask;
 	}
 	// Read full address space
-	ic_bus_input(ram.bus[BUS_Q]);
-	for (ram.bus[BUS_ADDRESS].address = 0; ram.bus[BUS_ADDRESS].address < ram.bus[BUS_ADDRESS].high; ++ram.bus[BUS_ADDRESS].address) {
+	ic_bus_input(memory.bus[BUS_Q]);
+	for (memory.bus[BUS_ADDRESS].address = 0; memory.bus[BUS_ADDRESS].address < memory.bus[BUS_ADDRESS].high; ++memory.bus[BUS_ADDRESS].address) {
 		worker.success = 0;
 		worker.failure = 0;
 		ic_sram_read();
-		if (ram.bus[BUS_D].data != ram.bus[BUS_Q].data) {
+		if (memory.bus[BUS_D].data != memory.bus[BUS_Q].data) {
 #if MISMATCH
 			Debug("A ");
-			Debug(ram.bus[BUS_ADDRESS].address, BIN);
+			Debug(memory.bus[BUS_ADDRESS].address, BIN);
 			Debug(", D ");
-			Debug(ram.bus[BUS_D].data, BIN);
+			Debug(memory.bus[BUS_D].data, BIN);
 			Debug(", Q ");
-			Debug(ram.bus[BUS_Q].data, BIN);
+			Debug(memory.bus[BUS_Q].data, BIN);
 			Debug(", delta ");
-			Debugln(ram.bus[BUS_D].data ^ ram.bus[BUS_Q].data, BIN);
+			Debugln(memory.bus[BUS_D].data ^ memory.bus[BUS_Q].data, BIN);
 #endif
 			worker.failure++;
 			worker.color = COLOR_BAD;
 		} else {
 			worker.success++;
 		}
-		ram.bus[BUS_D].data ^= mask;
+		memory.bus[BUS_D].data ^= mask;
 		ui_draw_indicator((worker.success ? (worker.failure ? COLOR_MIXED : COLOR_GOOD) : COLOR_BAD));
 	}
 	ui_draw_ram();
+}
+
+/////////
+// ROM //
+/////////
+
+//String ic_rom_filename() {
+//	uint32_t index = ini_read_key("ROM", "index");
+//	ini_write_key("ROM", "index", ++index);
+//	String filename ="rom-";
+//	filename += index;
+//	filename += ".bin";
+//	return filename;
+//}
+
+void ic_rom_filename(String& filename) {
+	char buffer[5];
+	uint32_t index = ini_read_key("ROM", "index");
+	ini_write_key("ROM", "index", ++index);
+	filename ="ict-";
+	snprintf(buffer, 5, "%04ld", index);
+//	filename += index;
+	filename += buffer;
+	filename += ".bin";
+}
+
+void ic_rom_loop() {
+	// Flags
+	// TODO needs rework
+	bool flags[flag_count];
+	for (uint8_t index = 0; index < flag_count; ++index) {
+		flags[index] = checkboxes[index].Checked();
+	}
+	// File
+	String filename;
+	File file;
+	if (flags[flag_rom_sdcard]) {
+		ic_rom_filename(filename);
+		file = fat.open(filename.c_str(), O_CREAT | O_RDWR);
+		tft.setTextColor(TFT_WHITE);
+		tft.print(F("Dump to: "));
+		tft.println(filename);
+	}
+	// UI
+//	worker.ram = 0;
+	uint16_t color = COLOR_OK;
+	worker.color = COLOR_GOOD;
+	ui_draw_rom();
+	// Miscellaneous
+	uint8_t count = (memory.bus[BUS_ADDRESS].width) / 4 + (memory.bus[BUS_ADDRESS].width % 4 ? 1 : 0);
+	uint8_t data[16];
+#if TIME
+	// Timer
+	unsigned long start = millis();
+#endif
+	// Setup
+	for (uint8_t index = 0; index < memory.bus[BUS_Q].width; ++index) {
+		ic_pin_mode(worker.package.pins[memory.bus[BUS_Q].pins[index]], INPUT);
+	}
+	// VCC, GND
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_GND]], LOW);
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_VCC]], HIGH);
+	// At package creation all pins are output low
+	// LOW bus is preset, so only set HIGH bus high
+	for (uint8_t index = 0; index < memory.bus[BUS_HIGH].width; ++index) {
+		ic_pin_write(worker.package.pins[memory.bus[BUS_HIGH].pins[index]], HIGH);
+	}
+	// Idle
+	memory.idle();
+	// Test
+	worker.indicator = 0;
+	uint8_t index = 0;
+	bool blank = true;
+	// Read full address space
+	ic_bus_input(memory.bus[BUS_Q]);
+	for (memory.bus[BUS_ADDRESS].address = 0; memory.bus[BUS_ADDRESS].address < memory.bus[BUS_ADDRESS].high; ++memory.bus[BUS_ADDRESS].address) {
+		ic_sram_read();
+		data[index] = memory.bus[BUS_Q].data;
+		// Serial
+		if (flags[flag_rom_serial]) {
+			if (index == 0) {
+				hexa(memory.bus[BUS_ADDRESS].address, count);
+			}
+			if (index == 8) {
+				Serial.print(" ");
+			}
+			Serial.print(" ");
+			hexa(memory.bus[BUS_Q].data, 2);
+		}
+		// Blank
+		if (blank && (memory.bus[BUS_Q].data != memory.bus[BUS_Q].high)) {
+			blank = false;
+			color = COLOR_KO;
+			worker.color = COLOR_BAD;
+			ui_draw_rom();
+			if (flags[flag_rom_blank]) {
+				break;
+			}
+		}
+		++index %= 16;
+		if (index == 0) {
+			// Serial
+			if (flags[flag_rom_serial]) {
+				Serial.print(" ");
+				for (uint8_t index = 0; index < 16; ++index) {
+					if (index == 8) {
+						Serial.print("  ");
+					}
+					if (iscntrl(char(data[index]))) {
+						Serial.print('.');
+					} else {
+						Debug(char(data[index]));
+					}
+				}
+				Serial.println();
+			}
+			// File
+			if (flags[flag_rom_sdcard]) {
+				file.write(data, 16);
+			}
+		}
+//		ui_draw_indicator(blank ? COLOR_OK : COLOR_KO);
+		ui_draw_indicator(color);
+	}
+	// Shutdown
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_VCC]], LOW);
+#if TIME
+	unsigned long stop = millis();
+	Serial.print(F(TIME_ELAPSED));
+	Serial.println((stop - start) / 1000.0);
+#endif
+	// File
+	if (flags[flag_rom_sdcard]) {
+		file.close();
+	}
+}
+
+void ic_rom_idle() {
+	// Idle
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_WE]], HIGH);
+	if (ic_memory_signal(SIGNAL_OE)) {
+		ic_pin_write(worker.package.pins[memory.signals[SIGNAL_OE]], HIGH);
+	}
+	ic_pin_write(worker.package.pins[memory.signals[SIGNAL_CS]], HIGH);
 }
 
 //////////////////
@@ -647,7 +840,7 @@ bool ts_touched() {
 		// TODO adapt code to your display
 		worker.x = map(point.y, TS_LEFT, TS_RT, TFT_WIDTH, 0);
 		worker.y = map(point.x, TS_TOP, TS_BOT, 0, TFT_HEIGHT);
-		if (point.z > TS_MIN && point.z < TS_MAX) {
+		if ((point.z > TS_MIN) && (point.z < TS_MAX)) {
 			return true;
 		}
 	}
@@ -706,7 +899,7 @@ void sd_screen_capture() {
 	Serial.print(filename);
 	uint16_t* pixels = (uint16_t*)malloc(sizeof(uint16_t) * TFT_WIDTH);
 	if (pixels) {
-		SdFile file;
+		File file;
 		if (file.open(filename.c_str(), O_CREAT | O_RDWR)) {
 			for (unsigned int y = 0; y < TFT_HEIGHT; ++y) {
 				tft.readGRAM(0, y, pixels, TFT_WIDTH, 1);
@@ -721,6 +914,80 @@ void sd_screen_capture() {
 	Serial.println(" done");
 }
 #endif
+
+uint32_t  ini_read_key(const char* section, const char* key) {
+	uint32_t value = 0;
+	File file = fat.open(INIFILE);
+	if (file) {
+		bool in = false;
+		// Patterns
+		String patterns[2];
+		patterns[0] = "[";
+		patterns[0].concat(section);
+		patterns[0].concat("]");
+		patterns[1].concat(key);
+		patterns[1].concat("=");
+		while (file.available()) {
+			String line = file.readStringUntil('\n');
+			line.trim();
+			// Key
+			if (in && line.startsWith(patterns[1])) {
+				value = line.substring(line.indexOf("=") + 1).toInt();
+				break;
+			} else {
+				// Section
+				if (line.startsWith("[")) {
+					in = line.equalsIgnoreCase(patterns[0]);
+				}
+			}
+		}
+		file.close();
+	} else {
+		Debug(INIFILE);
+		Debugln(F(" not found"));
+		worker.state = state_media;
+	}
+	return value;
+}
+
+void ini_write_key(const char* section, const char* key, uint32_t value) {
+	File input = fat.open(INIFILE);
+	File output = fat.open(TMPFILE, O_CREAT | O_RDWR);
+	if (input && output) {
+		bool in = false;
+		// Patterns
+		String patterns[2];
+		patterns[0] = "[";
+		patterns[0].concat(section);
+		patterns[0].concat("]");
+		patterns[1].concat(key);
+		patterns[1].concat("=");
+		while (input.available()) {
+			String line = input.readStringUntil('\n');
+			line.trim();
+			// Key
+			if (in && line.startsWith(patterns[1])) {
+				output.print(key);
+				output.print("=");
+				output.println(value);
+			} else {
+				// Section
+				if (line.startsWith("[")) {
+					in = line.equalsIgnoreCase(patterns[0]);
+				}
+				output.println(line);
+			}
+		}
+		input.close();
+		fat.remove(INIFILE);
+		output.rename(INIFILE);
+		output.close();
+	} else {
+		Debug(INIFILE);
+		Debugln(F(" not found"));
+		worker.state = state_media;
+	}
+}
 
 ////////////////////
 // User interface //
@@ -800,6 +1067,14 @@ void ui_draw_ram() {
 	}
 }
 
+void ui_draw_rom() {
+	unsigned int x = (TFT_WIDTH - RAM_BOX)/ 2;
+	tft.fillRect(x, RAM_TOP, RAM_SIZE, RAM_SIZE, worker.color);
+	tft.setTextSize(3);
+	tft.setTextColor(TFT_BLACK);
+	ui_draw_center(F("FF"), RAM_TOP + (RAM_BOX - 3 * 8) / 2);
+}
+
 void ui_draw_header(bool erase) {
 	if (erase) {
 		tft.fillScreen(COLOR_BACKGROUND);
@@ -825,8 +1100,10 @@ void ui_draw_escape() {
 }
 
 void ui_draw_menu(const char* items[], const unsigned int count) {
-	unsigned int y = AREA_CONTENT - 4;
+//	unsigned int y = AREA_CONTENT - 4;
+	unsigned int y = AREA_CONTENT - 14;
 	ui_draw_header(true);
+#if 0
 	for (uint8_t index = 0; index < count; ++index) {
 		buttons[index].initButton(&tft,
 		BUTTON_X,
@@ -838,6 +1115,45 @@ void ui_draw_menu(const char* items[], const unsigned int count) {
 		tft.setTextSize(3);
 		tft.setCursor(2 * BUTTON_X, y);
 		y += BUTTON_H + BUTTON_SPACING_Y;
+		tft.print(items[index]);
+	}
+#else
+
+	// UI buttons
+	#define MENU_X 33
+	#define MENU_Y 80
+	#define MENU_W 52
+	#define MENU_H 36
+	#define MENU_SPACING_X 12
+	#define MENU_SPACING_Y 6
+	#define MENU_TEXTSIZE 2
+
+
+	for (uint8_t index = 0; index < count; ++index) {
+		buttons[index].initButton(&tft,
+		MENU_X,
+		MENU_Y + index * (MENU_H + MENU_SPACING_Y),
+		MENU_W, MENU_H, COLOR_KEY, COLOR_KEY, COLOR_LABEL,
+				(char*) String(index + 1).c_str(), MENU_TEXTSIZE);
+		buttons[index].drawButton();
+		tft.setTextColor(COLOR_TEXT, COLOR_BACKGROUND);
+		tft.setTextSize(3);
+		tft.setCursor(2 * MENU_X, y);
+		y += MENU_H + MENU_SPACING_Y;
+		tft.print(items[index]);
+	}
+#endif
+}
+
+void ui_draw_checkbox(const char* items[], const unsigned int count) {
+	unsigned int y = CHECKBOX_Y;
+	for (uint8_t index = 0; index < count; ++index) {
+		checkboxes[index].Initialize(&tft, CHECKBOX_X, y);
+		checkboxes[index].Draw();
+		tft.setTextColor(COLOR_TEXT, COLOR_BACKGROUND);
+		tft.setTextSize(CHECKBOX_TEXTSIZE);
+		tft.setCursor(CHECKBOX_X + CHECKBOX_W + CHECKBOX_SPACING_X, y);
+		y += CHECKBOX_H + CHECKBOX_SPACING_Y;
 		tft.print(items[index]);
 	}
 }
@@ -863,8 +1179,13 @@ void ui_draw_screen() {
 		break;
 	case state_menu: {
 		worker.action = action_idle;
+#if 0
 		const char* items[] = { IDENTIFY_LOGIC, TEST_LOGIC, TEST_RAM };
 		ui_draw_menu(items, 3);
+#else
+		const char* items[] = { IDENTIFY_LOGIC, TEST_LOGIC, TEST_RAM, TEST_ROM };
+		ui_draw_menu(items, 4);
+#endif
 	}
 		break;
 	case state_identify_logic: {
@@ -881,7 +1202,7 @@ void ui_draw_screen() {
 		// Action
 		tft.setTextSize(2);
 		ui_draw_center(F(IDENTIFY_LOGIC__), tft.getCursorY());
-		ic_identify_logic();
+		ic_logic_identify();
 		break;
 	case state_keyboard:
 		tft.fillScreen(TFT_NAVY);
@@ -898,6 +1219,17 @@ void ui_draw_screen() {
 				COLOR_DELETE, COLOR_DELETE, COLOR_LABEL, (char*)"DEL", BUTTON_TEXTSIZE);
 		buttons[button_del].drawButton();
 		break;
+	case state_option: {
+		const char* items[] = { "break on blank fail", "serial dump", "SD card dump"};
+		ui_draw_header(true);
+		// Action
+		tft.setTextSize(2);
+		ui_draw_center(F(TEST_ROM_), tft.getCursorY());
+		ui_draw_checkbox(items, 3);
+		ui_draw_button((char*)"CONTINUE");
+		ui_draw_escape();
+	}
+		break;
 	case state_test_logic:
 		ics.clear();
 		lines.clear();
@@ -905,7 +1237,7 @@ void ui_draw_screen() {
 		// Action
 		tft.setTextSize(2);
 		ui_draw_center(F(TEST_LOGIC_), tft.getCursorY());
-		ic_test_logic();
+		ic_logic_test();
 		break;
 	case state_test_ram:
 		ics.clear();
@@ -914,7 +1246,20 @@ void ui_draw_screen() {
 		// Action
 		tft.setTextSize(2);
 		ui_draw_center(F(TEST_RAM_), tft.getCursorY());
-		ic_test_ram();
+		ic_memory_test();
+		break;
+	case state_test_rom:
+		ics.clear();
+		lines.clear();
+		ui_draw_header(true);
+		// Action
+		tft.setTextSize(2);
+		ui_draw_center(F(TEST_ROM_), tft.getCursorY());
+#if 0
+		ic_test_rom();
+#else
+		ic_memory_test();
+#endif
 		break;
 	case state_identified:
 		ui_clear_footer();
@@ -954,6 +1299,7 @@ void ui_draw_screen() {
 				}
 					break;
 				case action_test_ram:
+				case action_test_rom:
 					break;
 			}
 			ui_draw_button((char*)"REDO");
@@ -998,6 +1344,7 @@ void ui_draw_content() {
 		break;
 	case action_test_logic:
 	case action_test_ram:
+	case action_test_rom:
 		if (worker.found) {
 		} else {
 			ui_draw_error(F(NO_MATCH_FOUND));
@@ -1117,11 +1464,12 @@ void ic_package_test() {
 }
 #endif
 
-bool ic_test_logic(String line) {
+bool ic_logic_test(String line) {
 	bool result = true;
-	int8_t clock = -1;
+	bool clock = false;
+//	int8_t clock = -1;
 	Debugln(line);
-	// VCC, GND and output
+	// VCC, GND and input
 	for (uint8_t index = 0; index < worker.package.count; ++index) {
 		switch (line[index]) {
 		case 'V':
@@ -1156,19 +1504,37 @@ bool ic_test_logic(String line) {
 			ic_pin_write(worker.package.pins[index], HIGH);
 			break;
 		case 'C':
-			clock = index;
+//			clock = index;
+			clock = true;
 			ic_pin_mode(worker.package.pins[index], OUTPUT);
 			ic_pin_write(worker.package.pins[index], LOW);
 			break;
 		}
 	}
 	// Clock
+#if 0
 	if (clock != -1) {
 		ic_pin_mode(worker.package.pins[clock], INPUT_PULLUP);
 		delay(10);
 		ic_pin_mode(worker.package.pins[clock], OUTPUT);
 		ic_pin_write(worker.package.pins[clock], LOW);
 	}
+#else
+	if (clock) {
+		for (uint8_t index = 0; index < worker.package.count; ++index) {
+			if (line[index] == 'C') {
+				ic_pin_mode(worker.package.pins[index], INPUT_PULLUP);
+			}
+		}
+		delay(10);
+		for (uint8_t index = 0; index < worker.package.count; ++index) {
+			if (line[index] == 'C') {
+				ic_pin_mode(worker.package.pins[index], OUTPUT);
+				ic_pin_write(worker.package.pins[index], LOW);
+			}
+		}
+	}
+#endif
 	delay(5);
 	// Read
 	for (uint8_t index = 0; index < worker.package.count; ++index) {
@@ -1197,7 +1563,7 @@ bool ic_test_logic(String line) {
 	return result;
 }
 
-void ic_identify_logic() {
+void ic_logic_identify() {
 	String line;
 	IC ic;
 	File file = fat.open(LOGICFILE);
@@ -1218,7 +1584,7 @@ void ic_identify_logic() {
 				while (file.peek() != '$') {
 					line = file.readStringUntil('\n');
 					line.trim();
-					if (ic_test_logic(line) == false) {
+					if (ic_logic_test(line) == false) {
 						worker.ok = false;
 						break;
 					}
@@ -1242,13 +1608,13 @@ void ic_identify_logic() {
 		worker.state = state_identified;
 	} else {
 		Debug(LOGICFILE);
-		Debugln(F("not found"));
+		Debugln(F(" not found"));
 		worker.state = state_media;
 	}
 	ui_draw_screen();
 }
 
-void ic_test_logic() {
+void ic_logic_test() {
 	String line;
 	IC ic;
 	File file = fat.open(LOGICFILE);
@@ -1290,7 +1656,7 @@ void ic_test_logic() {
 			while (loop) {
 				worker.ok = true;
 				for (uint8_t index = 0; index < lines.count(); ++index) {
-					if (ic_test_logic(*lines[index]) == false) {
+					if (ic_logic_test(*lines[index]) == false) {
 						worker.ok = false;
 					}
 					delay(50);
@@ -1309,7 +1675,7 @@ void ic_test_logic() {
 		worker.state = state_tested;
 	} else {
 		Debug(LOGICFILE);
-		Debugln(F("not found"));
+		Debugln(F(" not found"));
 		worker.state = state_media;
 	}
 	ui_draw_screen();
@@ -1328,7 +1694,7 @@ bool ic_parse_bus(String& tag, String& data) {
 				Debug(", ");
 				Debug(pin);
 #endif
-				ram.bus[BUS[index]].pins[ram.bus[BUS[index]].width++] = pin - 1;
+				memory.bus[BUS[index]].pins[memory.bus[BUS[index]].width++] = pin - 1;
 				start = stop;
 			}
 			pin = data.substring(start).toInt();
@@ -1336,13 +1702,13 @@ bool ic_parse_bus(String& tag, String& data) {
 			Debug(", ");
 			Debug(pin);
 #endif
-			ram.bus[BUS[index]].pins[ram.bus[BUS[index]].width++] = pin - 1;
-			ram.bus[BUS[index]].high = (uint32_t)1 << ram.bus[BUS[index]].width;
+			memory.bus[BUS[index]].pins[memory.bus[BUS[index]].width++] = pin - 1;
+			memory.bus[BUS[index]].high = (uint32_t)1 << memory.bus[BUS[index]].width;
 #if 1
 			Debug(", width ");
-			Debug(ram.bus[BUS[index]].width);
+			Debug(memory.bus[BUS[index]].width);
 			Debug(", high 0x");
-			Debug(ram.bus[BUS[index]].high, HEX);
+			Debug(memory.bus[BUS[index]].high, HEX);
 #endif
 			return true;
 		}
@@ -1360,24 +1726,24 @@ bool ic_parse_signal(String& tag, String& data) {
 			Debug(F(" "));
 			Debug(pin);
 #endif
-			ram.signals[SIGNALS[index]] = pin - 1;
+			memory.signals[SIGNALS[index]] = pin - 1;
 			return true;
 		}
 	}
 	return false;
 }
 
-void ic_parse_ram(IC& ic) {
-	ram.count = ic.count;
+void ic_parse_memory(IC& ic) {
+	memory.count = ic.count;
 	// Reset
-	ram.bus[BUS_RAS].width = 0;
-	ram.bus[BUS_CAS].width = 0;
-	ram.bus[BUS_D].width = 0;
-	ram.bus[BUS_Q].width = 0;
-	ram.bus[BUS_LOW].width = 0;
-	ram.bus[BUS_HIGH].width = 0;
+	memory.bus[BUS_RAS].width = 0;
+	memory.bus[BUS_CAS].width = 0;
+	memory.bus[BUS_D].width = 0;
+	memory.bus[BUS_Q].width = 0;
+	memory.bus[BUS_LOW].width = 0;
+	memory.bus[BUS_HIGH].width = 0;
 	for (uint8_t index = 0; index < SIGNAL_COUNT; ++index) {
-		ram.signals[index] = -1;
+		memory.signals[index] = -1;
 	}
 	if (lines[0]->equals("DRAM")) {
 		ic.type = TYPE_DRAM;
@@ -1386,6 +1752,10 @@ void ic_parse_ram(IC& ic) {
 	if (lines[0]->equals("SRAM")) {
 		ic.type = TYPE_SRAM;
 		Debugln("SRAM");
+	}
+	if (lines[0]->equals("ROM")) {
+		ic.type = TYPE_ROM;
+		Debugln("ROM");
 	}
 	// Parse
 	for (uint8_t index = 1; index < lines.count(); ++index) {
@@ -1402,8 +1772,8 @@ void ic_parse_ram(IC& ic) {
 		}
 	}
 	// Decrease data bus
-	ram.bus[BUS_D].high -= 1;
-	ram.bus[BUS_Q].high -= 1;
+	memory.bus[BUS_D].high -= 1;
+	memory.bus[BUS_Q].high -= 1;
 //	Debug("signals ");
 //	for (uint8_t index = 0; index < SIGNAL_COUNT; ++index) {
 //		if (index) {
@@ -1429,10 +1799,10 @@ void ic_parse_ram(IC& ic) {
 //	}
 }
 
-void ic_test_ram() {
+void ic_memory_test() {
 	String line;
 	IC ic;
-	File file = fat.open(RAMFILE);
+	File file = fat.open(MEMORYFILE);
 	if (file) {
 		worker.indicator = 0;
 		worker.found = false;
@@ -1497,37 +1867,142 @@ void ic_test_ram() {
 		}
 		file.close();
 		if (worker.found) {
-			ic_parse_ram(ic);
+			ic_parse_memory(ic);
 			switch (ic.type) {
 			case TYPE_DRAM:
-				ram.idle = &ic_dram_idle;
-				ram.fill = &ic_dram_fill;
-				if (ram.bus[BUS_ADDRESS].width > 16) {
-					ram.write_address = &ic_bus_write_address_dword;
+				memory.loop = &ic_ram_loop;
+				memory.idle = &ic_dram_idle;
+				memory.fill = &ic_dram_fill;
+				if (memory.bus[BUS_ADDRESS].width > 16) {
+					memory.write_address = &ic_bus_write_address_dword;
 				} else {
-					ram.write_address = &ic_bus_write_address_word;
+					memory.write_address = &ic_bus_write_address_word;
 				}
 				break;
 			case TYPE_SRAM:
-				ram.idle = &ic_sram_idle;
-				ram.fill = &ic_sram_fill;
-				if ((ram.bus[BUS_RAS].width > 16) || (ram.bus[BUS_CAS].width > 16)) {
-					ram.write_address = &ic_bus_write_address_dword;
+				memory.loop = &ic_ram_loop;
+				memory.idle = &ic_sram_idle;
+				memory.fill = &ic_sram_fill;
+				if ((memory.bus[BUS_RAS].width > 16) || (memory.bus[BUS_CAS].width > 16)) {
+					memory.write_address = &ic_bus_write_address_dword;
 				} else {
-					ram.write_address = &ic_bus_write_address_word;
+					memory.write_address = &ic_bus_write_address_word;
+				}
+				break;
+			case TYPE_ROM:
+				memory.loop = &ic_rom_loop;
+				memory.idle = &ic_rom_idle;
+				if (memory.bus[BUS_ADDRESS].width > 16) {
+					memory.write_address = &ic_bus_write_address_dword;
+				} else {
+					memory.write_address = &ic_bus_write_address_word;
 				}
 				break;
 			}
-			ic_ram();
+			memory.loop();
+//			ic_ram();
 		}
 		worker.state = state_tested;
 	} else {
-		Debug(RAMFILE);
-		Debugln(F("not found"));
+		Debug(MEMORYFILE);
+		Debugln(F(" not found"));
 		worker.state = state_media;
 	}
 	ui_draw_screen();
 }
+
+#if 0
+void ic_test_rom() {
+	String line;
+	IC ic;
+	File file = fat.open(MEMORYFILE);
+	if (file) {
+		worker.indicator = 0;
+		worker.found = false;
+		while (file.available()) {
+			file.readStringUntil('$');
+			if (!file.available()) {
+				// Avoid timeout at the end of file
+				break;
+			}
+			// Aliases
+			bool first = true;
+			bool loop = true;
+			while (loop) {
+				line = file.readStringUntil('\n');
+				if (line[0] == '$' || first) {
+					// Code and aliases
+					if (worker.found == false) {
+						String code;
+						int start = first ? 0 : 1;
+						int stop = 0;
+						first = false;
+						line.trim();
+						while ((stop = line.indexOf(':', start)) > -1) {
+							code = line.substring(start, stop++);
+							if (worker.code.equalsIgnoreCase(code)) {
+								ic.code = code;
+								worker.found = true;
+							}
+							start = stop;
+						}
+						// Last alias
+						code = line.substring(start);
+						if (worker.code.equalsIgnoreCase(code)) {
+							ic.code = code;
+							worker.found = true;
+						}
+					}
+				} else {
+					ic.description = line;
+					loop = false;
+				}
+			}
+			ic.count = file.readStringUntil('\n').toInt();
+			if (worker.found) {
+				worker.index = 0;
+				worker.success = 0;
+				worker.failure = 0;
+				worker.package.count = ic.count;
+				ic_package_create();
+				ic_package_output();
+				ics.push(new IC(ic));
+				ui_draw_content();
+				while (file.peek() != '$') {
+					line = file.readStringUntil('\n');
+					line.trim();
+					lines.push(new String(line));
+				}
+				break;
+			} else {
+				ui_draw_indicator(COLOR_SKIP);
+			}
+		}
+		file.close();
+		if (worker.found) {
+			ic_parse_memory(ic);
+			switch (ic.loop) {
+			case TYPE_ROM:
+				memory.idle = &ic_rom_idle;
+//				ram.fill = &ic_dram_fill;
+				if (memory.bus[BUS_ADDRESS].width > 16) {
+					memory.write_address = &ic_bus_write_address_dword;
+				} else {
+					memory.write_address = &ic_bus_write_address_word;
+				}
+				break;
+			}
+			ic_rom_loop();
+		}
+		worker.state = state_tested;
+	} else {
+		Debug(MEMORYFILE);
+		Debugln(F(" not found"));
+		worker.state = state_media;
+	}
+	ui_draw_screen();
+}
+#endif
 
 ///////////////////////////////
 // Interrupt Service Routine //
@@ -1581,6 +2056,21 @@ void setup() {
 #endif
 	// SD card
 	worker.state = sd_begin() ? state_startup : state_media;
+#if 0
+	uint32_t index = ini_read_key("ROM", "index");
+	Debugln(index);
+	ini_write_key("ROM", "index", ++index);
+	ini_read_key("ROM", "index");
+	Debugln(index);
+	ini_write_key("ROM", "index", ++index);
+	ini_read_key("ROM", "index");
+	Debugln(index);
+	ini_write_key("ROM", "index", ++index);
+	ini_read_key("ROM", "index");
+	Debugln(index);
+	ini_write_key("ROM", "index", ++index);
+	while (true) {};
+#endif
 	// UI
 	ui_draw_screen();
 }
@@ -1593,6 +2083,7 @@ void loop() {
 		case state_startup:
 		case state_identified:
 		case state_tested:
+		case state_option:
 			switch (worker.action) {
 				case action_identify_logic:
 					if (buttons[button_test].contains(worker.x, worker.y)) {
@@ -1604,9 +2095,23 @@ void loop() {
 					break;
 				case action_test_logic:
 				case action_test_ram:
+				case action_test_rom:
 					if (buttons[button_redo].contains(worker.x, worker.y)) {
 						Debugln(F("redo"));
+						switch (worker.action) {
+						case action_test_logic:
+							state = state_test_logic;
+							break;
+						case action_test_ram:
+							state = state_test_ram;
+							break;
+						case action_test_rom:
+							state = state_test_rom;
+							break;
+						}
+#if 0
 						state = worker.action == action_test_logic ? state_test_logic : state_test_ram;
+#endif
 					}
 					break;
 			}
@@ -1641,6 +2146,13 @@ void loop() {
 				Debugln(F("test ram"));
 				ics.clear();
 				worker.action = action_test_ram;
+				worker.code = "";
+				state = state_keyboard;
+			}
+			if (buttons[button_test_rom].contains(worker.x, worker.y)) {
+				Debugln(F("test rom"));
+				ics.clear();
+				worker.action = action_test_rom;
 				worker.code = "";
 				state = state_keyboard;
 			}
@@ -1698,6 +2210,10 @@ void loop() {
 						case action_test_ram:
 							state = state_test_ram;
 							break;
+						case action_test_rom:
+//							state = state_test_rom;
+							state = state_option;
+							break;
 						}
 					} else {
 						state = state_menu;
@@ -1717,6 +2233,11 @@ void loop() {
 				delay(100);
 			}
 		}
+			break;
+		case state_option:
+			for (uint8_t index = 0; index < checkbox_count; ++index) {
+				checkboxes[index].Read(worker.x, worker.y, touched);
+			}
 			break;
 		case state_identified:
 			if (ics.count() > 1) {

@@ -7,7 +7,8 @@ ICT allows to identify and verify integrated circuits of the [4000](https://en.w
 
 It also allos to test memory components.
 - Dynamic memories 4116, 4164, 41256, 4416 and 44256.
-- Static memories 2114, 6116 et 61256.
+- Static memories 2114, 6116 and 61256.
+- Read-only memories 2764, 27128 and 27256.
 
 It is possible to handle new components by adding definitions into the files of parameters.
 
@@ -24,7 +25,7 @@ ICT is made of several items.
 As for the screen, there are many models with different controllers. It will therefore be necessary to adapt the management of the screen.
 The screen used is perfectly managed by the MCUFRIEND_kbv library for display and the Adafruit TouchScreen library for touch.
 
-The files **logic.txt** and **ram.txt** must be copied to the root of the micro SD card.
+The files **logic.ict**, **memory.ict** and **ict.ini** must be copied to the root of the micro SD card.
 ### Software
 To develop the application, the Eclipse IDE, the Sloeber plugin and the official Arduino core are used:
 - [Eclipse CDT](https://www.eclipse.org/cdt/) 2020-06
@@ -83,13 +84,25 @@ To improve touch accuracy, it is possible to increase the number of samples used
 - On the next screen, enter the code of the circuit to be tested. For example ** 74139 ** for a component **74LS139**.
 - Click on the **ENTER** button.
 - The circuit test is carried out. To interrupt the operation, tap the screen.
-### Memory component test
+### RAM component test
 - Insert the component to be tested in the ZIF support.
 - Select the option **RAM test**.
-- On the next screen, enter the code of the component to be tested. For example **4164** or **tms4164** for a component **TMS4164**.
+- On the next screen, enter the code of the component to be tested. For example **4164** or **tms4164** for a **TMS4164** component.
 - Click on the **ENTER** button.
 - Component test is performed.
-> It is possible to enter alphanumeric memory component codes.
+> It is possible to enter alphanumeric RAM component codes.
+### ROM component test
+- Insert the component to be tested in the ZIF support.
+- Select the option **ROM test**.
+- On the next screen, enter the code of the component to be tested. For example **2764** or **am27c64** for an **AM27C64** component.
+- Click on the **ENTER** button.
+- On the next screen, select the options:
+    - Break if the memory is not blank.
+    - Dump content to the serial monitor.
+    - Dump content to SD card.
+- Click on the **CONTINUE** button.
+- Component test is performed.
+> It is possible to enter alphanumeric ROM component codes.
 ## Troubleshooting
 In general, if the ICT extension does not work properly, it is necessary to make each element work step by step.
 You have to start by using the screen on the Arduino Mega, without the ICT extension.

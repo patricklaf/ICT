@@ -15,6 +15,7 @@
 #define IDENTIFY_LOGIC "identify logic"
 #define TEST_LOGIC "test logic"
 #define TEST_RAM "test RAM"
+#define TEST_ROM "test ROM"
 
 #define DIP14_PACKAGE "DIP 14 package"
 #define DIP16_PACKAGE "DIP 16 package"
@@ -22,6 +23,7 @@
 #define IDENTIFY_LOGIC__ "Identify logic"
 #define TEST_LOGIC_ "Test logic"
 #define TEST_RAM_ "Test RAM"
+#define TEST_ROM_ "Test ROM"
 
 #define CYCLES " cycles, "
 #define PASSED "% passed"

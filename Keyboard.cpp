@@ -107,7 +107,8 @@ bool Keyboard::read(int16_t x, int16_t y, const bool pressed) {
 		} else {
 			// Key just released
 			draw(false);
-			return (key < _none) && (KEYS[key] != ' ');
+//			return (key < _none) && (KEYS[key] != ' ');
+			return (_key < _none) && (KEYS[_key] != ' ');
 		}
 	} else {
 		if (_state) {

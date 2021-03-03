@@ -1,8 +1,8 @@
-// RAM
+// Memory
 // © 2020-2021 Patrick Lafarguette
 
-#ifndef RAM_H_
-#define RAM_H_
+#ifndef MEMORY_H_
+#define MEMORY_H_
 
 #include "Bus.h"
 
@@ -37,17 +37,18 @@ enum {
 	BUS_COUNT,
 };
 
-typedef struct RAM {
+typedef struct Memory {
 	uint8_t count;
 	int8_t signals[SIGNAL_COUNT];
 	Bus bus[BUS_COUNT];
+	void (*loop)();
 	void (*idle)();
 	void (*fill)(const bool alternate);
 	void (*write_address)(Bus& bus);
 } RAM;
 
-RAM ram;
+Memory memory;
 
-const char* RAM_BUS[BUS_COUNT] = { "row", "column", "d", "q", "low", "high" };
+const char* MEMORY_BUS[BUS_COUNT] = { "row", "column", "d", "q", "low", "high" };
 
-#endif /* RAM_H_ */
+#endif /* MEMORY_H_ */

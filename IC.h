@@ -6,8 +6,8 @@
 
 #include <Arduino.h>
 
-#define ICT_VERSION "2.2.0"
-#define ICT_DATE "08/02/2021"
+#define ICT_VERSION "2.3.0"
+#define ICT_DATE "03/03/2021"
 
 #define ZIF_COUNT 40
 
