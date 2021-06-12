@@ -1,13 +1,12 @@
 // Keyboard
-// © 2020 Patrick Lafarguette
+// © 2020-2001 Patrick Lafarguette
 
 #include "Keyboard.h"
-#include <String.h>
 
-#define AZERTY 1
-#define QWERTY 0
+#define KEYBOARD_AZERTY 1
+#define KEYBOARD_QWERTY 0
 
-#if AZERTY
+#if KEYBOARD_AZERTY
 // 1 2 3 4 5 6 7 8 9 0
 // a z e r t y u i o p
 // q s d f g h j k l m
@@ -15,7 +14,7 @@
 const char KEYS[] = "1234567890azertyuiopqsdfghjklmwxcvbn";
 #endif
 
-#if QWERTY
+#if KEYBOARD_QWERTY
 // 0 1 2 3 4 5 6 7 8 9
 // q w e r t y u i o p
 // a s d f g h j k l
@@ -28,7 +27,7 @@ const char KEYS[] = "1234567890qwertyuiopasdfghjkl zxcvbnm";
 #define KEY_WIDTH 32
 #define KEY_HEIGHT 32
 
-Keyboard::Keyboard(Adafruit_GFX* gfx, unsigned int y) {
+Keyboard::Keyboard(Adafruit_GFX* gfx, unsigned int x, unsigned int y, unsigned int w, unsigned int h) {
 	_gfx = gfx;
 	_y = y;
 	_state = false;
@@ -107,7 +106,6 @@ bool Keyboard::read(int16_t x, int16_t y, const bool pressed) {
 		} else {
 			// Key just released
 			draw(false);
-//			return (key < _none) && (KEYS[key] != ' ');
 			return (_key < _none) && (KEYS[_key] != ' ');
 		}
 	} else {

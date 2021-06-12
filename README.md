@@ -5,10 +5,12 @@ ICT is a tester for integrated circuits
 ## Presentation
 ICT allows to identify and verify integrated circuits of the [4000](https://en.wikipedia.org/wiki/List_of_4000-series_integrated_circuits) and [7400](https://en.wikipedia.org/wiki/List_of_7400-series_integrated_circuits) series.
 
-It also allos to test memory components.
+It also allows to test memory components.
 - Dynamic memories 4116, 4164, 41256, 4416 and 44256.
 - Static memories 2114, 6116 and 61256.
 - Read-only memories 2764, 27128 and 27256.
+- Ferroelectric random-access memories FM1608 and FM1808.
+- Flash memories SST39SF010A, SST39SF020A and SST39SF040.
 
 It is possible to handle new components by adding definitions into the files of parameters.
 
@@ -35,19 +37,19 @@ To develop the application, the Eclipse IDE, the Sloeber plugin and the official
 
 #### Libraries
 The application uses several libraries:
-- Adafruit BusIO 1.7.2
-- Adafruit GFX Library 1.10.4
-- Adafruit TouchScreen 1.1.1
+- Adafruit BusIO 1.7.5
+- Adafruit GFX Library 1.10.10
+- Adafruit TouchScreen 1.1.2
 - MCUFRIEND_kbv 2.9.9
-- SdFat 1.1.4 ou 2.0.4
+- SdFat 1.1.4 ou 2.0.6
 #### Modifications
-It is necessary to modify the file ** SdFatConfig.h ** of the SdFat library to allow access to the micro SD card.
+It is necessary to modify the file **SdFatConfig.h** of the **SdFat** library to allow access to the micro SD card.
 
 In version 1.1.4, you must set `ENABLE_SOFTWARE_SPI_CLASS` to 1:
 ```cpp
 #define ENABLE_SOFTWARE_SPI_CLASS 1
 ```
-In version 2.0.4, you must set `SPI_DRIVER_SELECT` to 2:
+In version 2.0.6, you must set `SPI_DRIVER_SELECT` to 2:
 ```cpp
 #define SPI_DRIVER_SELECT 2
 ```
@@ -74,35 +76,59 @@ To improve touch accuracy, it is possible to increase the number of samples used
 - The push button at the top left below the screen is a reset button.
 
 ### Identification of logic circuits
-- Insert the circuit to be identified in the ZIF support.
-- Select the option **identify logic**.
-- On the next screen, select the number of pins, 14 or 16 of the circuit.
+- Insert the component to be identified in the ZIF support.
+- Select the option **Logic**.
+- On the next screen, select the number of pins of the component.
 - Component identification is performed.
 ### Logic circuit test
-- Insert the circuit to be tested in the ZIF socket.
-- Select the option **test logic**.
-- On the next screen, enter the code of the circuit to be tested. For example ** 74139 ** for a component **74LS139**.
+- Insert the component to be tested in the ZIF socket.
+- Select the option **Logic**.
+- On the next screen, select **Keyboard**, then enter the code of the component to be tested. For example **74139** for a component **74LS139**.
 - Click on the **ENTER** button.
-- The circuit test is carried out. To interrupt the operation, tap the screen.
-### RAM component test
+- Component test is performed. To interrupt the operation, tap the screen.
+### RAM component
 - Insert the component to be tested in the ZIF support.
-- Select the option **RAM test**.
+- Select the option **Memory**.
 - On the next screen, enter the code of the component to be tested. For example **4164** or **tms4164** for a **TMS4164** component.
 - Click on the **ENTER** button.
-- Component test is performed.
-> It is possible to enter alphanumeric RAM component codes.
-### ROM component test
+- A read/write test with 4 different patterns of bits is performed.
+### ROM component
 - Insert the component to be tested in the ZIF support.
-- Select the option **ROM test**.
+- Select the option **Memory**.
 - On the next screen, enter the code of the component to be tested. For example **2764** or **am27c64** for an **AM27C64** component.
 - Click on the **ENTER** button.
 - On the next screen, select the options:
-    - Break if the memory is not blank.
-    - Dump content to the serial monitor.
-    - Dump content to SD card.
+    - Break on blank fail.
+    - Read to serial.
+    - Read to file.
 - Click on the **CONTINUE** button.
-- Component test is performed.
-> It is possible to enter alphanumeric ROM component codes.
+- The selected actions are performed.
+### FRAM component
+- Insert the component to be tested in the ZIF support.
+- Select the option **Memory**.
+- On the next screen, enter the code of the component to be tested. For example **fm1608** for an **FM1608** component.
+- Click on the **ENTER** button.
+- On the next screen, select the options:
+    - Read to serial.
+    - Read to file.
+    - Erase.
+    - Write.
+- Click on the **CONTINUE** button.
+- The selected actions are performed. If no option is selected, the component is tested like a RAM.
+- If the **Write** option is selected, on the next screen, select a file. The component is written with the content of the selected file.
+### Flash component
+- Insert the component to be tested in the ZIF support.
+- Select the option **Memory**.
+- On the next screen, enter the code of the component to be tested. For example **sst39sf040** for an **SST39SF040** component.
+- Click on the **ENTER** button.
+- On the next screen, select the options:
+    - Read to serial.
+    - Read to file.
+    - Erase.
+    - Write.
+- Click on the **CONTINUE** button.
+- The selected actions are performed. If no option is selected, the component is tested like a RAM.
+- If the **Write** option is selected, on the next screen, select a file. The component is written with the content of the selected file.
 ## Troubleshooting
 In general, if the ICT extension does not work properly, it is necessary to make each element work step by step.
 You have to start by using the screen on the Arduino Mega, without the ICT extension.
@@ -117,8 +143,8 @@ Another solution is to use the **diagnose_TFT_support.ino** sketch in the exampl
 ### Touch operation
 The **TouchScreen_Calibr_native.ino** example sketch of the **MCUFRIEND_kbv** library is used to configure and calibrate the touch screen.
 ### SD operation
-Problems accessing the SD card, apart from a correct configuration of the ** SdFat ** library, are linked to incompatible formatting of the card.
+Problems accessing the SD card, apart from a correct configuration of the **SdFat** library, are linked to incompatible formatting of the card.
 
-Once every element works, the last step is to integrate the extension. At this stage, the only point that can cause problems is improper insertion of the extension.### Fonctionnement de la SD
+Once every element works, the last step is to integrate the extension. At this stage, the only point that can cause problems is improper insertion of the extension.
 ## Links
 For help or to obtain the ICT extension, you can consult the thread [[Arduino] ICT testeur de circuits intégrés](https://forum.system-cfg.com/viewtopic.php?f=18&t=11417), from the System.cfg site forum.

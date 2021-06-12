@@ -12,18 +12,20 @@
 
 #define INSERT_SD_CARD "Insert an SD card"
 
-#define IDENTIFY_LOGIC "identify logic"
-#define TEST_LOGIC "test logic"
-#define TEST_RAM "test RAM"
-#define TEST_ROM "test ROM"
+#define MENU_LOGIC "Logic"
+#define MENU_MEMORY "Memory"
 
-#define DIP14_PACKAGE "DIP 14 package"
-#define DIP16_PACKAGE "DIP 16 package"
-
-#define IDENTIFY_LOGIC__ "Identify logic"
-#define TEST_LOGIC_ "Test logic"
-#define TEST_RAM_ "Test RAM"
-#define TEST_ROM_ "Test ROM"
+#define MAIN_MENU "Main menu"
+#define IDENTIFY_LOGIC "Identify logic"
+#define LOGIC_TEST "Logic test"
+#define LOAD_MEMORY "Load memory"
+#define LOAD_LOGIC "Load logic"
+#define MEMORY_FOUND "Memory found"
+#define LOGIC_FOUND "Logic found"
+#define MEMORY_TEST "Memory test"
+#define FRAM_OPTION "FRAM option"
+#define ROM_OPTION "ROM option"
+#define WRITE_FILE "Write file"
 
 #define CYCLES " cycles, "
 #define PASSED "% passed"
@@ -35,9 +37,9 @@
 #define NO_MATCH_FOUND "No match found"
 #define MATCH_FOUND "Match found"
 
-#define _LOW "L"
-#define _HIGH "H"
-#define SPACE " "
+#define LOGIC_LOW "L"
+#define LOGIC_HIGH "H"
+#define LOGIC_SPACE " "
 
 #elif FRENCH
 
@@ -68,8 +70,8 @@
 #define NO_MATCH_FOUND "Aucune correspondance"
 #define MATCH_FOUND "Correspondance trouvée"
 
-#define _LOW "L"
-#define _HIGH "H"
+#define LOGIC_LOW "L"
+#define LOGIC_HIGH "H"
 #define SPACE " "
 
 #endif

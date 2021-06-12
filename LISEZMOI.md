@@ -9,6 +9,8 @@ Il permet également de vérifier le fonctionnement de composants mémoires.
 - Mémoires dynamiques 4116, 4164, 41256, 4416 et 44256.
 - Mémoires statiques 2114, 6116 et 61256.
 - Mémoires mortes 2764, 27128 et 27256.
+- Mémoires ferro-électriques FM1608 et FM1808.
+- Mémoires flash SST39SF010A, SST39SF020A et SST39SF040.
 
 Il est possible de supporter de nouveaux composants en ajoutant leur définition dans les fichiers de paramètres.
 
@@ -35,19 +37,19 @@ Pour développer l'application, l'IDE Eclipse, le plugin Sloeber et le core offi
 
 #### Librairies
 L'application utilise plusieurs librairies :
-- Adafruit BusIO 1.7.2
-- Adafruit GFX Library 1.10.4
-- Adafruit TouchScreen 1.1.1
+- Adafruit BusIO 1.7.5
+- Adafruit GFX Library 1.10.10
+- Adafruit TouchScreen 1.1.2
 - MCUFRIEND_kbv 2.9.9
-- SdFat 1.1.4 ou 2.0.4
+- SdFat 1.1.4 ou 2.0.6
 #### Modifications
-Il est nécessaire de modifier le fichier **SdFatConfig.h** de la librairie SdFat pour permettre l'accès à la carte micro SD.
+Il est nécessaire de modifier le fichier **SdFatConfig.h** de la librairie **SdFat** pour permettre l'accès à la carte micro SD.
 
 En version 1.1.4, il faut définir `ENABLE_SOFTWARE_SPI_CLASS` à 1 :
 ```cpp
 #define ENABLE_SOFTWARE_SPI_CLASS 1
 ```
-En version 2.0.4, il faut définir `SPI_DRIVER_SELECT` à 2 :
+En version 2.0.6, il faut définir `SPI_DRIVER_SELECT` à 2 :
 ```cpp
 #define SPI_DRIVER_SELECT 2
 ```
@@ -74,26 +76,26 @@ Pour améliorer la précision du tactile, il est possible d'augmenter le nombre 
 - Le bouton poussoir en haut, à gauche sous l'écran est un bouton de réinitialisation.
 
 ### Identification de circuits logiques
-- Insérez le circuit à identifier dans le support ZIF.
-- Sélectionnez l'option **identify logic**.
-- Sur l'écran suivant, sélectionnez le nombre de broches, 14 ou 16 du circuit.
+- Insérez le composant à identifier dans le support ZIF.
+- Sélectionnez l'option **Logic**.
+- Sur l'écran suivant, sélectionnez le nombre de broches du composant.
 - L'identification du composant est effectuée.
 ### Test de circuits logiques
-- Insérez le circuit à tester dans le support ZIF.
-- Sélectionnez l'option **test logic**.
-- Sur l'écran suivant, entrez le code du circuit à tester. Par exemple **74139** pour un composant **74LS139**.
+- Insérez le composant à tester dans le support ZIF.
+- Sélectionnez l'option **Logic**.
+- Sur l'écran suivant, entrez le code du composant à tester. Par exemple **74139** pour un composant **74LS139**.
 - Cliquez sur le bouton **ENTER**.
 - Le test du circuit est effectué. Pour interrompre l'opération, appuyez sur l'écran. 
-### Test de composants mémoire vive
+### Mémoire vive
 - Insérez le composant à tester dans le support ZIF.
-- Sélectionnez l'option **test RAM**.
+- Sélectionnez l'option **Memory**.
 - Sur l'écran suivant, entrez le code du composant à tester. Par exemple **4164** ou **tms4164** pour un composant **TMS4164**.
 - Cliquez sur le bouton **ENTER**.
 - Le test du composant est effectué.
-> Il est possible d'entrer des codes alphanumériques de composant mémoire vive.
-### Test de composants mémoire morte
+- Un test d'écriture et de relecture de 4 différents motifs de bits est effectué. 
+### Mémoire morte
 - Insérez le composant à tester dans le support ZIF.
-- Sélectionnez l'option **test ROM**.
+- Sélectionnez l'option **Memory**.
 - Sur l'écran suivant, entrez le code du composant à tester. Par exemple **2764** ou **am27c64** pour un composant **AM27C64**.
 - Cliquez sur le bouton **ENTER**.
 - Sur l'écran suivant, sélectionnez les options :
@@ -101,8 +103,43 @@ Pour améliorer la précision du tactile, il est possible d'augmenter le nombre 
     - Extraction du contenu sur le moniteur série.
     - Extraction du contenu sur la carte SD.
 - Cliquez sur le bouton **CONTINUE**.
-- Le test du composant est effectué.
-> Il est possible d'entrer des codes alphanumériques de composant mémoire morte.
+- Les actions sélectionnées sont effectuées.
+### Mémoire ferro-électrique
+- Insérez le composant à tester dans le support ZIF.
+- Sélectionnez l'option **Memory**.
+- Sur l'écran suivant, entrez le code du composant à tester. Par exemple **fm1608** pour un composant **FM1608**.
+- Cliquez sur le bouton **ENTER**.
+- Sur l'écran suivant, sélectionnez les options :
+    - Extraction du contenu sur le moniteur série.
+    - Extraction du contenu sur la carte SD.
+    - Effacement.
+    - Ecriture.
+- Cliquez sur le bouton **CONTINUE**.
+- Les actions sélectionnées sont effectuées. Si aucune option n'est sélectionnée le composant est testé comme une mémoire vive.
+### Mémoire ferro-électrique
+- Insérez le composant à tester dans le support ZIF.
+- Sélectionnez l'option **Memory**.
+- Sur l'écran suivant, entrez le code du composant à tester. Par exemple **fm1608** pour un composant **FM1608**.
+- Cliquez sur le bouton **ENTER**.
+- Sur l'écran suivant, sélectionnez les options :
+    - Extraction du contenu sur le moniteur série.
+    - Extraction du contenu sur la carte SD.
+    - Effacement.
+    - Ecriture.
+- Cliquez sur le bouton **CONTINUE**.
+- Les actions sélectionnées sont effectuées. Si aucune option n'est sélectionnée le composant est testé comme une mémoire vive.
+### Mémoire flash
+- Insérez le composant à tester dans le support ZIF.
+- Sélectionnez l'option **Memory**.
+- Sur l'écran suivant, entrez le code du composant à tester. Par exemple **sst39sf040** pour un composant **SST39SF040**.
+- Cliquez sur le bouton **ENTER**.
+- Sur l'écran suivant, sélectionnez les options :
+    - Extraction du contenu sur le moniteur série.
+    - Extraction du contenu sur la carte SD.
+    - Effacement.
+    - Ecriture.
+- Cliquez sur le bouton **CONTINUE**.
+- Les actions sélectionnées sont effectuées. Si aucune option n'est sélectionnée le composant est testé comme une mémoire vive.
 ## Résolution de problème
 D'une manière générale, si l'extension ICT ne fonctionne pas correctement, il est nécessaire de faire fonctionner chaque élément par étape.
 Il faut commencer par utiliser l'écran sur l'Arduino Mega, sans l'extension ICT.

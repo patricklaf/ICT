@@ -4,14 +4,9 @@
 #ifndef IC_H_
 #define IC_H_
 
-#include <Arduino.h>
-
-#define ICT_VERSION "2.3.0"
-#define ICT_DATE "03/03/2021"
-
+// Package pins
 #define ZIF_COUNT 40
 
-// Package pins
 const uint8_t ZIF[ZIF_COUNT] = {
 		23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 49, 51, 53, A11, A10, A9, A8,
 		A12, A13, A14, A15, 52, 50, 48, 46, 44, 42, 40, 38, 36, 34, 32, 30, 28, 26, 24, 22
@@ -20,14 +15,17 @@ const uint8_t ZIF[ZIF_COUNT] = {
 enum {
 	TYPE_NONE,
 	TYPE_LOGIC,
-	TYPE_DRAM,
-	TYPE_SRAM,
-	TYPE_ROM,
+	TYPE_DRAM, // Test (write, read)
+	TYPE_SRAM, // Test (write, read)
+	TYPE_FRAM, // Test (write, read), read (blank, dump), write (program)
+	TYPE_FLASH, // Read (blank, dump), erase, write (erase, program)
+	TYPE_ROM, // Read (blank, dump)
 };
 
 typedef struct IC {
 	uint8_t type;
 	uint8_t count;
+	uint32_t position;
 	String code;
 	String description;
 } IC;

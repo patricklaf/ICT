@@ -19,6 +19,8 @@ enum {
 	SIGNAL_CAS,
 	SIGNAL_WE, // /W
 	SIGNAL_OE, // /G
+	SIGNAL_PP, // Positive pulse
+	SIGNAL_NP, // Negative pulse
 	SIGNAL_GND, // VSS
 	SIGNAL_VCC, // +5V
 	SIGNAL_VBB, // -5V
@@ -45,10 +47,8 @@ typedef struct Memory {
 	void (*idle)();
 	void (*fill)(const bool alternate);
 	void (*write_address)(Bus& bus);
-} RAM;
+} Memory;
 
 Memory memory;
-
-const char* MEMORY_BUS[BUS_COUNT] = { "row", "column", "d", "q", "low", "high" };
 
 #endif /* MEMORY_H_ */

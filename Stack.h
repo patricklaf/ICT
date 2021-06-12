@@ -1,51 +1,17 @@
 // Stack
-// © 2019 Patrick Lafarguette
-//
-// See https://github.com/zacsketches/Arduino_Vector
-// and https://en.wikipedia.org/wiki/Bubble_sort
+// © 2021 Patrick Lafarguette
 
-#ifndef STACK_H
-#define STACK_H
+#ifndef STACK_H_
+#define STACK_H_
 
 #include <Arduino.h>
 
-#ifndef UNUSED
-#define UNUSED(X) (void)X
-#endif
-
-template<typename T>
-void* operator new(size_t size, T* item) {
-	UNUSED(size);
-	return item;
-}
-
-template<typename T> struct Allocator {
-
-	Allocator() {};
-
-	T* allocate(unsigned int count) {
-		return reinterpret_cast<T*>(new char[count * sizeof(T)]);
-	}
-
-	void deallocate(T* item) {
-		delete[] reinterpret_cast<char*>(item);
-	}
-
-	void create(T* pointer, const T& item) {
-		new (pointer) T(item);
-	}
-	void destroy(T* item) {
-		item->~T();
-	}
-};
-
-template<class T, class A = Allocator<T> >
+template<class T>
 class Stack {
 private:
 	unsigned int _count;
 	unsigned int _capacity;
 
-	A _allocator;
 	T* _items;
 
 	Stack(const Stack&);
@@ -64,8 +30,9 @@ public:
 
 	~Stack() {
 		for (unsigned int index = 0; index < _count; ++index) {
-			_allocator.destroy(&_items[index]);
+			free(_items[index]);
 		}
+		free(_items);
 	}
 
 	T& operator[](unsigned int index) {
@@ -85,7 +52,7 @@ public:
 	}
 
 	void reserve(unsigned int capacity);
-	void push(const T& item);
+	void push(const T item);
 	void pop();
 	void clear();
 	void sort(bool (*Compare)(T& a, T& b));
@@ -95,7 +62,7 @@ private:
 	void swap(const unsigned int a, const unsigned int b);
 };
 
-template<class T, class A> Stack<T, A>& Stack<T, A>::operator=(const Stack& stack) {
+template<class T> Stack<T>& Stack<T>::operator=(const Stack& stack) {
 	if (this == &stack) {
 		return *this;
 	}
@@ -107,62 +74,59 @@ template<class T, class A> Stack<T, A>& Stack<T, A>::operator=(const Stack& stac
 		return *this;
 	}
 
-	T* items = _allocator.allocate(stack.count());
+	T* items = malloc(stack.count() * sizeof(T));
 	for (unsigned int index = 0; index < stack.count(); ++index) {
-		_allocator.create(&items[index], stack[index]);
+		items[index] = stack[index];
 	}
 	for (unsigned int index = 0; index < _count; ++index) {
-		_allocator.destroy(&_items[index]);
+		delete _items[index];
 	}
 	_capacity = _count = stack.count();
 	_items = items;
 	return *this;
 }
 
-template<class T, class A> void Stack<T, A>::reserve(unsigned int capacity) {
+template<class T> void Stack<T>::reserve(unsigned int capacity) {
 	if (capacity <= _capacity) {
 		return;
 	}
-	T* pointer = _allocator.allocate(capacity);
+	T* pointer = (T*)malloc(capacity * sizeof(T));
 	for (unsigned int index = 0; index < _count; ++index) {
-		_allocator.create(&pointer[index], _items[index]);
+		pointer[index] = _items[index];
 	}
-	for (unsigned int index = 0; index < _count; ++index) {
-		_allocator.destroy(&_items[index]);
-	}
-	_allocator.deallocate(_items);
+	free(_items);
 	_items = pointer;
 	_capacity = capacity;
 }
 
-template<class T, class A>
-void Stack<T, A>::push(const T& item) {
+template<class T>
+void Stack<T>::push(const T item) {
 	if (_capacity == 0) {
 		reserve(4);
 	} else if (_count == _capacity) {
 		reserve(2 * _capacity);
 	}
-	_allocator.create(&_items[_count], item);
+	_items[_count] = item;
 	++_count;
 }
 
-template<class T, class A>
-void Stack<T, A>::pop() {
+template<class T>
+void Stack<T>::pop() {
 	if (_count > 0) {
-		_allocator.destroy(&_items[--_count]);
+		delete(_items[--_count]);
 	}
 }
 
-template<class T, class A>
-void Stack<T, A>::clear() {
+template<class T>
+void Stack<T>::clear() {
 	for (unsigned int index = 0; index < _count; ++index) {
-		_allocator.destroy(&_items[index]);
+		delete(_items[index]);
 	}
 	_count = 0;
 }
 
-template<class T, class A>
-void Stack<T, A>::sort(bool (*Compare)(T& a, T& b)) {
+template<class T>
+void Stack<T>::sort(bool (*Compare)(T& a, T& b)) {
 	if (_count) {
 		unsigned int last = _count;
 		do {
@@ -179,15 +143,15 @@ void Stack<T, A>::sort(bool (*Compare)(T& a, T& b)) {
 	}
 }
 
-template<class T, class A>
-void Stack<T, A>::swap(const unsigned int a, const unsigned int b) {
+template<class T>
+void Stack<T>::swap(const unsigned int a, const unsigned int b) {
 	T swap = _items[a];
 	_items[a] = _items[b];
 	_items[b] = swap;
 }
 
-template<class T, class A>
-void Stack<T, A>::dump() {
+template<class T>
+void Stack<T>::dump() {
 	for (unsigned int index = 0; index < _count; ++index) {
 		Serial.print(index);
 		Serial.print(" : ");
@@ -197,4 +161,4 @@ void Stack<T, A>::dump() {
 	Serial.flush();
 }
 
-#endif /* STACK_H */
+#endif /* STACK_H_ */
