@@ -116,18 +116,6 @@ Pour améliorer la précision du tactile, il est possible d'augmenter le nombre 
     - Ecriture.
 - Cliquez sur le bouton **CONTINUE**.
 - Les actions sélectionnées sont effectuées. Si aucune option n'est sélectionnée le composant est testé comme une mémoire vive.
-### Mémoire ferro-électrique
-- Insérez le composant à tester dans le support ZIF.
-- Sélectionnez l'option **Memory**.
-- Sur l'écran suivant, entrez le code du composant à tester. Par exemple **fm1608** pour un composant **FM1608**.
-- Cliquez sur le bouton **ENTER**.
-- Sur l'écran suivant, sélectionnez les options :
-    - Extraction du contenu sur le moniteur série.
-    - Extraction du contenu sur la carte SD.
-    - Effacement.
-    - Ecriture.
-- Cliquez sur le bouton **CONTINUE**.
-- Les actions sélectionnées sont effectuées. Si aucune option n'est sélectionnée le composant est testé comme une mémoire vive.
 ### Mémoire flash
 - Insérez le composant à tester dans le support ZIF.
 - Sélectionnez l'option **Memory**.

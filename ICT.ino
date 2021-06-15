@@ -50,9 +50,9 @@ SoftSpiDriver<SOFT_MISO_PIN, SOFT_MOSI_PIN, SOFT_SCK_PIN> spi;
 
 #define SDCONFIG SdSpiConfig(SD_CS_PIN, SHARED_SPI, SD_SCK_MHZ(0), &spi)
 
+SdFat fat;
 #endif
 
-SdFat fat;
 File file;
 
 IC ic;
